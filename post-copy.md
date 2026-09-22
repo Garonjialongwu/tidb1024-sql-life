@@ -14,8 +14,8 @@
 > 一条 SQL 在 TiDB 的一生：客户端→Parser→CBO→PD 授时→按 key 定位 Region 与 Leader→下推 TiKV→RocksDB 按 MVCC 取回那一行。可点击动画，每步附官方来源，可核。
 
 **作品展示**
-- 在线运行：`https://<用户名>.github.io/<仓库名>/`
-- 源码：`https://github.com/<用户名>/<仓库名>`
+- 在线运行：`https://Garonjialongwu.github.io/tidb1024-sql-life/`
+- 源码：`https://github.com/Garonjialongwu/tidb1024-sql-life`
 
 **AIGC 工具说明**
 > 技术解读与文案由 PingCAP Loop 的 Agent 协作产出，关键论断均抓 `docs.pingcap.com` 官方原文逐条核对；拓扑与动画为代码生成的 SVG/Canvas，未使用图像生成模型；代码由 Agent 编写、人工复核。
@@ -33,8 +33,8 @@
 > 这件作品不是一个人做的，而是一支 PingCAP Loop 搭的 Agent 小队：有人出题、有人画、有人审、有人打回重做。上面的《一条 SQL 的一生》就是它们吵出来的，过程留痕在 git 里，可复核。
 
 **作品展示**
-- 本体在线运行：`https://<用户名>.github.io/<仓库名>/`
-- 协作留痕：`https://github.com/<用户名>/<仓库名>/commits/main`
+- 本体在线运行：`https://Garonjialongwu.github.io/tidb1024-sql-life/`
+- 协作留痕：`https://github.com/Garonjialongwu/tidb1024-sql-life/commits/main`
 
 **AIGC 工具说明**
 > 全流程由 PingCAP Loop 的多 Agent 协作完成：出题、可视化、技术解读、评审、打回重做；协作与打回记录留存于 git 提交历史，可审计。
