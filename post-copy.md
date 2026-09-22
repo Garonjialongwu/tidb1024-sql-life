@@ -11,7 +11,7 @@
 **标题**：1024 TiDB AIGC 黑客松 · 一条 SQL 的一生
 
 **作品说明（≤100 字）**
-> 一条 SQL 在 TiDB 的一生：客户端→Parser→CBO→PD 授时→按 key 定位 Region 与 Leader→下推 TiKV→RocksDB 按 MVCC 取回那一行。可点击动画，每步附官方来源，可核。
+> 一条SQL在TiDB的一生：客户端→Parser→CBO→PD授时→定位Region与Leader→下推TiKV→RocksDB按MVCC取回那一行。可点击动画，每步附官方来源，可核。
 
 **作品展示**
 - 在线运行：`https://Garonjialongwu.github.io/tidb1024-sql-life/`
@@ -30,7 +30,7 @@
 **标题**：1024 TiDB AIGC 黑客松 · 一支 Agent 小队是怎么画出这条 SQL 的
 
 **作品说明（≤100 字）**
-> 这件作品不是一个人做的，而是一支 PingCAP Loop 搭的 Agent 小队：有人出题、有人画、有人审、有人打回重做。上面的《一条 SQL 的一生》就是它们吵出来的，过程留痕在 git 里，可复核。
+> 这件作品不是一个人做的，而是一支PingCAP Loop搭的Agent小队：有人出题、有人画、有人审、有人打回重做。上面的《一条SQL的一生》就是它们吵出来的，过程留痕在git里，可复核。
 
 **作品展示**
 - 本体在线运行：`https://Garonjialongwu.github.io/tidb1024-sql-life/`
