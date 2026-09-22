@@ -4,283 +4,935 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>一条 SQL 的一生 · TiDB 1024 黑客松</title>
+<!-- canonical v3.0 — 数据形态随环节变化 / 曲线折线传导 / 幕内交互 -->
 <style>
   :root{
-    --bg:#0b1020; --panel:#121a30; --line:#2b3a63; --dim:#8aa0c8;
-    --hl:#00e5ff; --packet:#ffd166; --text:#e8eeff; --ok:#7ef0a6;
+    --bg:#04060c; --bg2:#080d18; --surface:rgba(15,22,38,.74);
+    --line:#1b2740; --line2:#243352; --text:#e9eefb; --muted:#8296ba;
+    --accent:#46d3ff; --accent2:#8b7bff; --packet:#ffb454; --ok:#5ee6a8;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    --serif:"Songti SC","STSong",Georgia,"Times New Roman",serif;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);
-    font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
-  header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;
-    align-items:center;gap:14px;flex-wrap:wrap}
-  h1{font-size:16px;margin:0;letter-spacing:.5px}
-  .sql{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0a1226;
-    border:1px solid var(--line);border-radius:8px;padding:8px 12px;color:var(--ok)}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 var(--sans);
+    overflow:hidden;-webkit-font-smoothing:antialiased}
+
+  #app{display:flex;flex-direction:column;height:100vh;position:relative;
+    background:
+      radial-gradient(1200px 700px at 12% -10%,rgba(70,211,255,.10),transparent 60%),
+      radial-gradient(900px 600px at 92% 108%,rgba(139,123,255,.12),transparent 60%),
+      linear-gradient(180deg,var(--bg) 0%,var(--bg2) 100%);}
+
+  /* ---------- top bar ---------- */
+  .topbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+    padding:12px 20px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,rgba(8,13,24,.9),rgba(8,13,24,.4));z-index:5}
+  .brand{display:flex;align-items:baseline;gap:10px}
+  .brand h1{font:600 16px/1 var(--serif);letter-spacing:.06em;margin:0}
+  .brand .tag{font-size:10px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--accent);border:1px solid rgba(70,211,255,.35);border-radius:20px;
+    padding:3px 9px;background:rgba(70,211,255,.06)}
+  .query{font:12.5px/1 var(--mono);color:var(--ok);background:#060b16;
+    border:1px solid var(--line);border-radius:8px;padding:8px 12px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:44vw;
+    box-shadow:inset 0 0 30px rgba(94,230,168,.06)}
   .spacer{flex:1}
-  button{background:#1b2745;color:var(--text);border:1px solid var(--line);
-    border-radius:8px;padding:7px 14px;cursor:pointer;font-size:13px}
-  button:hover{border-color:var(--hl);color:var(--hl)}
-  button:disabled{opacity:.4;cursor:default}
-  main{display:grid;grid-template-columns:1fr 320px;gap:0;min-height:560px}
-  #stage{position:relative;border-right:1px solid var(--line)}
-  svg{display:block;width:100%;height:auto}
-  aside{border-left:1px solid var(--line);padding:16px}
-  .step-num{font-size:12px;color:var(--dim);letter-spacing:1px}
-  .step-title{font-size:16px;margin:4px 0 10px;color:var(--hl)}
-  .step-desc{font-size:13px;color:#c8d6f2}
-  .src{display:inline-block;margin-top:12px;font-size:11px;color:var(--dim);
-    text-decoration:none;border-bottom:1px dotted var(--dim);word-break:break-all}
-  .src:hover{color:var(--hl);border-color:var(--hl)}
-  footer{padding:12px 18px;border-top:1px solid var(--line);
-    display:flex;gap:18px;align-items:center;flex-wrap:wrap;color:var(--dim);font-size:12px}
-  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;
-    background:var(--dim);vertical-align:middle;margin-right:5px}
-  .dot.live{background:var(--hl);box-shadow:0 0 8px var(--hl)}
-  .node rect{fill:#141d36;stroke:var(--line);stroke-width:1.4;rx:10}
-  .node text{fill:var(--text);font-size:12.5px}
-  .node .sub{fill:var(--dim);font-size:10.5px}
-  .node.hl rect{stroke:var(--hl);fill:#0d2a3a;filter:url(#glow)}
-  .edge{stroke:var(--line);stroke-width:1.6;fill:none}
-  .edge.dash{stroke-dasharray:5 5}
-  .edge.hl{stroke:var(--hl);stroke-width:2.4;filter:url(#glow)}
-  .plan{font-family:ui-monospace,Menlo,monospace;font-size:12px;margin-top:16px;
-    background:#0a1226;border:1px solid var(--line);border-radius:8px;padding:10px}
-  .plan div{padding:3px 6px;border-radius:5px;color:#c8d6f2;white-space:pre}
-  .plan div.on{background:#0d2a3a;color:var(--hl)}
-  .badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:20px;
-    border:1px solid var(--line);color:var(--dim)}
+  .ctrls{display:flex;gap:8px}
+  button{font:500 12.5px/1 var(--sans);color:var(--text);background:rgba(27,39,64,.6);
+    border:1px solid var(--line2);border-radius:8px;padding:9px 14px;cursor:pointer;
+    transition:.18s border-color,.18s color,.18s background}
+  button:hover{border-color:var(--accent);color:var(--accent);
+    background:rgba(70,211,255,.07)}
+  button.primary{background:linear-gradient(180deg,rgba(70,211,255,.16),rgba(70,211,255,.05));
+    border-color:rgba(70,211,255,.5);color:#cdf3ff}
+  button:disabled{opacity:.35;cursor:default}
+
+  /* ---------- main ---------- */
+  main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 372px;min-height:0}
+
+  .stage{position:relative;min-width:0;overflow:hidden}
+  .stage::after{content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 45%,transparent 55%,rgba(0,0,0,.55) 100%)}
+  #scene{width:100%;height:100%;display:block}
+
+  .node rect{fill:rgba(16,24,42,.92);stroke:var(--line2);stroke-width:1.3;
+    transition:stroke .35s,fill .35s}
+  .node text{fill:var(--text);font:12.5px/1 var(--sans)}
+  .node .sub{fill:var(--muted);font-size:10.5px}
+  .node{border:none;transition:opacity .4s}
+  .node{--c:var(--accent)}
+  .node.compute{--c:#46d3ff}
+  .node.pd{--c:#8b7bff}
+  .node.leader{--c:#ffb454}
+  .node.follower{--c:#6f9bd8}
+  .node.store{--c:#57e0c0}
+  .node.hl rect{stroke:var(--c);fill:rgba(12,42,60,.95)}
+  .node.hl{filter:url(#glow)}
+  .enclosure rect{fill:rgba(94,230,168,.035);stroke:rgba(94,230,168,.30);
+    stroke-width:1;stroke-dasharray:4 5}
+  .enclosure text{fill:rgba(94,230,168,.8);font:10.5px/1 var(--mono);letter-spacing:.06em}
+  .legend{position:absolute;left:20px;bottom:16px;z-index:2;display:flex;gap:14px;flex-wrap:wrap;
+    font:11px/1 var(--sans);color:var(--muted);background:rgba(6,9,17,.6);
+    border:1px solid var(--line);padding:7px 12px;border-radius:10px;backdrop-filter:blur(6px)}
+  .legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle}
+  .node.pulse rect{animation:ring 1.8s ease-out infinite}
+  @keyframes ring{0%,100%{stroke:rgba(70,211,255,.95)}50%{stroke:rgba(70,211,255,.35)}}
+
+  .edge{stroke:var(--line2);stroke-width:1.5;fill:none;transition:opacity .4s,stroke .35s}
+  .edge.dash{stroke-dasharray:5 6}
+  .edge.hl{stroke:var(--accent);stroke-width:2.2;filter:url(#glow);
+    stroke-dasharray:7 9;animation:eflow 1.05s linear infinite}
+  @keyframes eflow{to{stroke-dashoffset:-32}}
+  #route{fill:none;stroke:url(#flow);stroke-width:2.6;stroke-linecap:round;
+    opacity:0;filter:url(#glow)}
+  .bit{fill:#9fe8ff;font:12px var(--mono);text-anchor:middle;dominant-baseline:middle;
+    opacity:0;pointer-events:none}
+  .bit.hot{fill:#fff4dc}
+  #form{opacity:0;transition:opacity .3s}
+
+  .acts{position:absolute;left:20px;top:16px;z-index:2;pointer-events:none}
+  .acts .act{font:10px/1 var(--mono);letter-spacing:.28em;color:var(--accent);
+    text-transform:uppercase;opacity:.9}
+  .acts .idx{font:600 13px/1.2 var(--serif);color:var(--muted);margin-top:6px;letter-spacing:.05em}
+
+  /* ---------- payload forms ---------- */
+  .fb{fill:var(--packet);font:13px/1 var(--mono);letter-spacing:2px}
+  .fchip rect{fill:rgba(20,28,46,.95);stroke:var(--accent);stroke-width:1.1}
+  .fchip text{fill:#dff6ff;font:11px/1 var(--mono)}
+  .fchip.push rect{stroke:var(--packet)}
+  .fchip.push text{fill:#ffe9c8}
+  .fchip.row rect{stroke:var(--ok)}
+  .fchip.row text{fill:#d8ffe9}
+  .fcring{fill:none;stroke:var(--accent);stroke-width:1.4}
+  #fhand{stroke:var(--accent);stroke-width:2;stroke-linecap:round}
+  .fdigit{fill:var(--accent);font:600 14px/1 var(--mono)}
+
+  /* ---------- in-scene micro cards ---------- */
+  .mcard{fill:rgba(9,14,26,.93);stroke:var(--line2);stroke-width:1.2}
+  .mtitle{fill:var(--accent);font:10px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase}
+  .mcode{fill:#c9d7f4;font:11.5px/1 var(--mono)}
+  .mnote{fill:var(--muted);font:10.5px/1 var(--sans)}
+  .mlabel{fill:#b9c8e8;font:11px/1 var(--sans)}
+  .mlabel.ok{fill:#dff6ff}
+  .mok{fill:var(--ok);font:11px/1 var(--sans)}
+  .mtok rect{fill:rgba(27,39,64,.7);stroke:var(--line2);stroke-width:1;transition:fill .15s,stroke .15s}
+  .mtok text{fill:#b9c8e8;font:10.5px/1 var(--mono);text-anchor:middle}
+  .mtok.on rect{fill:rgba(70,211,255,.22);stroke:var(--accent)}
+  .mtok.on text{fill:#eaf9ff}
+  .mbar{fill:var(--accent);transition:width .1s linear}
+  .mbar.dim{fill:#3a4a68}
+  .mring{fill:none;stroke:var(--line2);stroke-width:1.5}
+  #mhand{stroke:var(--accent);stroke-width:2;stroke-linecap:round}
+  .mdigit{fill:var(--accent);font:600 20px/1 var(--mono);letter-spacing:.04em}
+  .mbits{fill:var(--packet);font:12px/1 var(--mono);letter-spacing:.13em}
+  .mbits.ok{fill:var(--ok)}
+  .mruler rect{fill:#0a1120;stroke:var(--line)}
+  .mruler rect.r{fill:rgba(70,211,255,.18);stroke:var(--accent)}
+  .mruler text{fill:var(--muted);font:10px/1 var(--mono)}
+  .mruler text.r{fill:#dff6ff}
+  .mkey rect{fill:var(--packet)}
+  .mkey text{fill:#2a1a00;font:9px/1 var(--mono);text-anchor:middle}
+  .mvrow text{fill:#c9d7f4;font:11px/1 var(--mono)}
+  .mvrow .ts{fill:var(--muted)}
+  .mvrow.on text{fill:var(--accent)}
+  #mscan{fill:rgba(70,211,255,.35)}
+  .mcheck{fill:var(--ok);font:13px/1 var(--sans)}
+
+  /* ---------- intro overlay ---------- */
+  #intro{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;text-align:center;gap:18px;
+    background:radial-gradient(60% 60% at 50% 45%,rgba(6,10,20,.72),rgba(4,6,12,.94));
+    backdrop-filter:blur(2px);transition:opacity .6s;padding:24px}
+  #intro.hide{opacity:0;pointer-events:none}
+  #intro .kicker{font:10px/1 var(--mono);letter-spacing:.4em;color:var(--accent);
+    text-transform:uppercase}
+  #intro h2{font:600 clamp(28px,4.6vw,52px)/1.15 var(--serif);margin:0;letter-spacing:.04em}
+  #intro p{margin:0;color:var(--muted);max-width:560px;font-size:13.5px}
+  #intro .hint{font:11px/1 var(--mono);color:#5c6d8f;letter-spacing:.05em}
+  #intro .go{margin-top:6px}
+
+  /* ---------- side panel ---------- */
+  .panel{border-left:1px solid var(--line);padding:22px 22px 30px;overflow:auto;
+    background:linear-gradient(180deg,rgba(10,15,28,.72),rgba(6,9,17,.82))}
+  .panel .meta{display:flex;align-items:center;justify-content:space-between;
+    font:10.5px/1 var(--mono);letter-spacing:.18em;color:var(--muted);
+    text-transform:uppercase;margin-bottom:14px}
+  .panel .meta .b{color:var(--accent)}
+  .panel h3{font:600 20px/1.35 var(--serif);margin:0 0 12px;letter-spacing:.02em;
+    min-height:1.35em}
+  .panel .desc{color:#c4d1ec;font-size:13.5px;margin:0 0 17px;min-height:4.6em}
+  .panel .eng{border:1px solid var(--line);border-radius:11px;background:#060b16;
+    padding:13px;margin-bottom:16px;min-height:150px;position:relative}
+  .panel .src{display:inline-flex;align-items:center;gap:7px;font:11px/1.4 var(--mono);
+    color:var(--muted);text-decoration:none;border-top:1px dotted var(--line2);
+    padding-top:12px;word-break:break-all;transition:color .18s}
+  .panel .src:hover{color:var(--accent)}
+  .panel .src::before{content:"§";color:var(--accent);opacity:.7}
+
+  /* engine widgets */
+  .eng-title{font:10px/1 var(--mono);letter-spacing:.2em;color:var(--accent);
+    text-transform:uppercase;margin-bottom:11px}
+  .eng-code{font:12.5px/1.6 var(--mono);color:#d6e2ff;white-space:pre-wrap}
+  .eng-code .k{color:var(--packet)}
+  .eng-tree{font:12px/1.65 var(--mono);color:#c9d7f4;margin:0;white-space:pre;
+    overflow:auto}
+  .eng-note{font-size:11.5px;color:var(--muted);margin-top:11px;line-height:1.55}
+  .eng-tbl{width:100%;border-collapse:collapse;font:12px/1.5 var(--mono)}
+  .eng-tbl th,.eng-tbl td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);color:#c9d7f4}
+  .eng-tbl th{color:var(--muted);font-weight:500;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase}
+  .eng-tbl tr.on td{background:rgba(70,211,255,.10);color:var(--accent)}
+  .eng-clock{font:600 30px/1 var(--mono);color:var(--accent);letter-spacing:.05em;
+    text-align:center;padding:8px 0 4px}
+  .eng-clock span{font-size:11px;color:var(--muted);display:block;margin-top:9px;
+    letter-spacing:.14em;font-weight:500}
+  .eng-ruler{display:flex;height:34px;border-radius:7px;overflow:hidden;
+    border:1px solid var(--line);font:11px/34px var(--mono);text-align:center}
+  .eng-ruler span{flex:1;color:var(--muted);background:#0a1120;border-right:1px solid var(--line)}
+  .eng-ruler span:last-child{border-right:0}
+  .eng-ruler span.r{flex:1.6;background:linear-gradient(180deg,rgba(70,211,255,.22),rgba(70,211,255,.08));
+    color:#dff6ff}
+  .eng-kv{margin-top:12px;font-size:12px;color:#c9d7f4;line-height:1.8}
+  .eng-kv b{color:var(--accent);font-weight:600}
+  .eng-cmp{display:grid;gap:9px}
+  .eng-cmp>div{border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:12px;color:#b9c8e8}
+  .eng-cmp .lbl{display:block;font:10px/1 var(--mono);letter-spacing:.14em;color:var(--muted);
+    text-transform:uppercase;margin-bottom:6px}
+  .eng-cmp>div.on{border-color:rgba(70,211,255,.5);background:rgba(70,211,255,.07);color:#e2f5ff}
+  .eng-cmp>div.on .lbl{color:var(--accent)}
+
+  /* ---------- timeline ---------- */
+  .timeline{display:flex;border-top:1px solid var(--line);background:rgba(6,9,17,.86);
+    padding:0 8px;z-index:5}
+  .tl{flex:1;min-width:0;position:relative;border:0;background:transparent;cursor:pointer;
+    padding:13px 10px 15px;text-align:left;color:var(--muted);border-radius:0;
+    transition:color .2s,background .2s}
+  .tl:hover{color:var(--text);background:rgba(70,211,255,.05)}
+  .tl .bar{position:absolute;left:10px;right:10px;top:0;height:2px;background:var(--line);overflow:hidden}
+  .tl .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));
+    transition:width .5s ease}
+  .tl.done .bar i{width:100%}
+  .tl.on .bar i{width:100%;box-shadow:0 0 10px var(--accent)}
+  .tl .n{font:10px/1 var(--mono);letter-spacing:.12em;color:#4d5f80}
+  .tl.on .n,.tl.done .n{color:var(--accent)}
+  .tl .t{display:block;font-size:12px;margin-top:5px;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis}
+  .tl.on .t{color:var(--text);font-weight:600}
+
+  @media (max-width:900px){
+    body{overflow:auto}
+    #app{height:auto;min-height:100vh}
+    main{grid-template-columns:1fr;grid-template-rows:auto auto}
+    .stage{height:56vh;border-bottom:1px solid var(--line)}
+    .panel{border-left:0}
+    .timeline{flex-wrap:wrap}
+    .tl{flex:1 1 33%}
+    .query{max-width:none;order:5;width:100%}
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>一条 SQL 的一生</h1>
-  <span class="sql">SELECT name FROM users WHERE id = 42;</span>
-  <span class="spacer"></span>
-  <button id="play">▶ 运行</button>
-  <button id="step">下一步</button>
-  <button id="reset">重置</button>
-</header>
+<div id="app">
 
-<main>
-  <div id="stage">
-    <svg viewBox="0 0 830 520" aria-label="TiDB 拓扑">
-      <defs>
-        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="3.2" result="b"/>
-          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
-      </defs>
-
-      <path id="e-c-tidb" class="edge" d="M130,280 L210,280"/>
-      <path id="e-tidb-pd"  class="edge" d="M285,225 L285,105"/>
-      <path id="e-tidb-t1"  class="edge" d="M360,270 L470,145"/>
-      <path id="e-tidb-t2"  class="edge" d="M360,280 L470,280"/>
-      <path id="e-tidb-t3"  class="edge" d="M360,290 L470,420"/>
-      <path id="e-t1-t2"    class="edge dash" d="M530,165 L530,250"/>
-      <path id="e-t2-t3"    class="edge dash" d="M530,310 L530,395"/>
-      <path id="e-t1-r1"    class="edge" d="M590,135 L660,135"/>
-      <path id="e-t2-r2"    class="edge" d="M590,280 L660,280"/>
-      <path id="e-t3-r3"    class="edge" d="M590,425 L660,425"/>
-
-      <g class="node" id="n-client">
-        <rect x="20" y="250" width="110" height="60"/>
-        <text x="75" y="276" text-anchor="middle">客户端</text>
-        <text class="sub" x="75" y="294" text-anchor="middle">MySQL 协议</text>
-      </g>
-
-      <g class="node" id="n-tidb">
-        <rect x="210" y="225" width="150" height="110"/>
-        <text x="285" y="250" text-anchor="middle">TiDB Server</text>
-        <text class="sub" x="285" y="270" text-anchor="middle">Parser → Optimizer</text>
-        <text class="sub" x="285" y="287" text-anchor="middle">Executor (root)</text>
-        <text class="sub" x="285" y="304" text-anchor="middle">无状态 · 计算层</text>
-      </g>
-
-      <g class="node" id="n-pd">
-        <rect x="225" y="45" width="120" height="60"/>
-        <text x="285" y="71" text-anchor="middle">PD</text>
-        <text class="sub" x="285" y="89" text-anchor="middle">调度 · TSO 授时</text>
-      </g>
-
-      <g class="node" id="n-tikv1">
-        <rect x="470" y="105" width="120" height="60"/>
-        <text x="530" y="131" text-anchor="middle">TiKV #1</text>
-        <text class="sub" x="530" y="149" text-anchor="middle">Region follower</text>
-      </g>
-      <g class="node" id="n-tikv2">
-        <rect x="470" y="250" width="120" height="60"/>
-        <text x="530" y="276" text-anchor="middle">TiKV #2</text>
-        <text class="sub" x="530" y="294" text-anchor="middle">Region leader</text>
-      </g>
-      <g class="node" id="n-tikv3">
-        <rect x="470" y="395" width="120" height="60"/>
-        <text x="530" y="421" text-anchor="middle">TiKV #3</text>
-        <text class="sub" x="530" y="439" text-anchor="middle">Region follower</text>
-      </g>
-
-      <g class="node" id="n-r1"><rect x="660" y="112" width="120" height="46"/>
-        <text x="720" y="133" text-anchor="middle">RocksDB</text>
-        <text class="sub" x="720" y="149" text-anchor="middle">副本</text></g>
-      <g class="node" id="n-r2"><rect x="660" y="257" width="120" height="46"/>
-        <text x="720" y="278" text-anchor="middle">RocksDB</text>
-        <text class="sub" x="720" y="294" text-anchor="middle">SeekPrefix</text></g>
-      <g class="node" id="n-r3"><rect x="660" y="402" width="120" height="46"/>
-        <text x="720" y="423" text-anchor="middle">RocksDB</text>
-        <text class="sub" x="720" y="439" text-anchor="middle">副本</text></g>
-
-      <circle id="packet" r="6" cx="-20" cy="-20" fill="var(--packet)" opacity="0"/>
-    </svg>
-  </div>
-
-  <aside>
-    <div class="step-num" id="num">STEP 0 / 9</div>
-    <div class="step-title" id="title">准备就绪</div>
-    <div class="step-desc" id="desc">点击「运行」或「下一步」，看这条 SQL 如何在 TiDB 里走完一生。</div>
-    <a class="src" id="src" href="https://docs.pingcap.com/tidb/stable/tidb-computing" target="_blank" rel="noopener">来源：PingCAP 官方文档</a>
-
-    <div class="plan" id="plan">
-      <div data-k="plan">EXPLAIN 计划</div>
-      <div data-k="pt">Point_Get   root        estRows:1</div>
-      <div data-k="scan">└─ TableRowIDScan cop[tikv] users</div>
+  <header class="topbar">
+    <div class="brand">
+      <h1>一条 SQL 的一生</h1>
+      <span class="tag">TiDB 1024</span>
     </div>
-    <div style="margin-top:10px"><span class="badge">技术解读 · 关键论断附官方来源</span></div>
-  </aside>
-</main>
+    <div class="query">SELECT name FROM users WHERE id = 42;</div>
+    <span class="spacer"></span>
+    <div class="ctrls">
+      <button id="play" class="primary">▶ 播放</button>
+      <button id="step">下一步</button>
+      <button id="reset">重置</button>
+    </div>
+  </header>
 
-<footer>
-  <span><span class="dot live" id="led"></span><span id="ledtxt">idle</span></span>
-  <span>Region = [StartKey, EndKey)，默认 256 MiB，三副本 Raft，读写走 Leader</span>
-  <span>点查 → cop[tikv] 下推 → RocksDB SeekPrefix（MVCC）</span>
-</footer>
+  <main>
+    <section class="stage">
+      <div class="acts">
+        <div class="act" id="act">ACT I · 发起</div>
+        <div class="idx" id="actidx">第 1 幕 / 共 9 幕</div>
+      </div>
+
+      <svg id="scene" viewBox="0 0 1000 620" preserveAspectRatio="xMidYMid meet" aria-label="TiDB 拓扑">
+        <defs>
+          <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+            <feGaussianBlur stdDeviation="3.4" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+          <radialGradient id="packetGrad">
+            <stop offset="0%" stop-color="#fff6e6"/>
+            <stop offset="45%" stop-color="#ffb454"/>
+            <stop offset="100%" stop-color="#ffb454" stop-opacity="0"/>
+          </radialGradient>
+          <linearGradient id="flow" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#46d3ff"/>
+            <stop offset="70%" stop-color="#ffb454"/>
+            <stop offset="100%" stop-color="#fff6e6"/>
+          </linearGradient>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M40 0H0V40" fill="none" stroke="rgba(70,211,255,.05)" stroke-width="1"/>
+          </pattern>
+        </defs>
+
+        <rect x="0" y="0" width="1000" height="620" fill="url(#grid)"/>
+
+        <g class="enclosure">
+          <rect x="546" y="94" width="422" height="412" rx="16"/>
+          <text x="552" y="86">Region = [StartKey, EndKey) · 三副本 Raft Group</text>
+        </g>
+
+        <g id="edges"></g>
+
+        <g id="nodes">
+          <g class="node compute" id="n-client">
+            <rect x="30" y="265" width="150" height="70" rx="11"/>
+            <text x="105" y="294" text-anchor="middle">客户端</text>
+            <text class="sub" x="105" y="314" text-anchor="middle">MySQL 协议</text>
+          </g>
+
+          <g class="node compute" id="n-tidb">
+            <rect x="250" y="235" width="180" height="130" rx="12"/>
+            <text x="340" y="266" text-anchor="middle">TiDB Server</text>
+            <text class="sub" x="340" y="288" text-anchor="middle">Parser · Optimizer</text>
+            <text class="sub" x="340" y="306" text-anchor="middle">Executor (root)</text>
+            <text class="sub" x="340" y="328" text-anchor="middle">无状态 · 计算层</text>
+          </g>
+
+          <g class="node pd" id="n-pd">
+            <rect x="300" y="60" width="150" height="70" rx="11"/>
+            <text x="375" y="89" text-anchor="middle">PD</text>
+            <text class="sub" x="375" y="109" text-anchor="middle">调度 · TSO 授时</text>
+          </g>
+
+          <g class="node follower" id="n-tikv1">
+            <rect x="560" y="110" width="150" height="70" rx="11"/>
+            <text x="635" y="139" text-anchor="middle">TiKV #1</text>
+            <text class="sub" x="635" y="159" text-anchor="middle">Region follower</text>
+          </g>
+          <g class="node leader" id="n-tikv2">
+            <rect x="560" y="265" width="150" height="70" rx="11"/>
+            <text x="635" y="294" text-anchor="middle">TiKV #2</text>
+            <text class="sub" x="635" y="314" text-anchor="middle">Region leader</text>
+          </g>
+          <g class="node follower" id="n-tikv3">
+            <rect x="560" y="420" width="150" height="70" rx="11"/>
+            <text x="635" y="449" text-anchor="middle">TiKV #3</text>
+            <text class="sub" x="635" y="469" text-anchor="middle">Region follower</text>
+          </g>
+
+          <g class="node store" id="n-r1">
+            <rect x="790" y="122" width="165" height="46" rx="9"/>
+            <text x="872" y="142" text-anchor="middle">RocksDB</text>
+            <text class="sub" x="872" y="158" text-anchor="middle">副本</text>
+          </g>
+          <g class="node store" id="n-r2">
+            <rect x="790" y="277" width="165" height="46" rx="9"/>
+            <text x="872" y="297" text-anchor="middle">RocksDB</text>
+            <text class="sub" x="872" y="313" text-anchor="middle">SeekPrefix</text>
+          </g>
+          <g class="node store" id="n-r3">
+            <rect x="790" y="432" width="165" height="46" rx="9"/>
+            <text x="872" y="452" text-anchor="middle">RocksDB</text>
+            <text class="sub" x="872" y="468" text-anchor="middle">副本</text>
+          </g>
+        </g>
+
+        <g id="micro"></g>
+        <path id="route" d=""/>
+        <g id="stream"></g>
+        <g id="form"></g>
+      </svg>
+
+      <div id="intro">
+        <div class="kicker">TiDB · Query Lifecycle</div>
+        <h2>一条 SQL 的一生</h2>
+        <p>从客户端发出到结果返回，一条点查语句会在 TiDB 里走完九个环节。跟随那些形态不断变化的数据——二进制包、语法树、时间戳、键、版本、结果行——看它在三副本之上取回属于它的那一行。</p>
+        <button class="go primary" id="start">▶ 开始观看</button>
+        <div class="hint">空格 播放/暂停 · ← → 单步 · 点下方章节直达</div>
+      </div>
+
+      <div class="legend">
+        <span><i style="background:#46d3ff"></i>计算层</span>
+        <span><i style="background:#8b7bff"></i>PD 调度</span>
+        <span><i style="background:#ffb454"></i>Region Leader</span>
+        <span><i style="background:#6f9bd8"></i>Follower</span>
+        <span><i style="background:#57e0c0"></i>存储 / RocksDB</span>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <div class="meta">
+        <span>幕 <span class="b" id="p-num">01</span> / 09</span>
+        <span id="p-stage">待机</span>
+      </div>
+      <h3 id="p-title">准备就绪</h3>
+      <p class="desc" id="p-desc">点击「开始观看」，跟随这条 SQL 走完它在 TiDB 里的一生。</p>
+      <div class="eng" id="p-eng"></div>
+      <a class="src" id="p-src" href="https://docs.pingcap.com/tidb/stable/tidb-computing" target="_blank" rel="noopener">docs.pingcap.com/tidb/stable/tidb-computing</a>
+    </aside>
+  </main>
+
+  <nav class="timeline" id="timeline"></nav>
+</div>
 
 <script>
-const D = "https://docs.pingcap.com/tidb/stable/";
-const N = {
-  client:[75,280], tidb:[285,280], pd:[285,75],
-  tikv1:[530,135], tikv2:[530,280], tikv3:[530,425],
-  r1:[720,135], r2:[720,280], r3:[720,425]
-};
+(function(){
+  "use strict";
+  var SVGNS = "http://www.w3.org/2000/svg";
+  var D = "https://docs.pingcap.com/tidb/stable/";
 
-const stages = [
-  { num:"STEP 1 / 9", title:"客户端发送 SQL",
-    desc:"客户端把 SQL 打成 MySQL 协议包发给 TiDB Server。TiDB 计算层无状态、节点完全等价，前面挂负载均衡即可。",
-    src:D+"tidb-computing",
-    hl:["n-client"], edges:["e-c-tidb"], path:["client","tidb"], plan:null },
+  var NODE = {
+    client:[105,300], tidb:[340,300], pd:[375,95],
+    tikv1:[635,145], tikv2:[635,300], tikv3:[635,455],
+    r1:[872,145], r2:[872,300], r3:[872,455]
+  };
 
-  { num:"STEP 2 / 9", title:"Parser：文本 → 语法树",
-    desc:"TiDB 解析协议包，做词法、语法与语义解析，把字符串变成 AST。",
-    src:D+"sql-optimization-concepts",
-    hl:["n-tidb"], edges:[], path:null, plan:null },
+  /* bend waypoints make every link a curve, not a straight segment */
+  var BEND = {
+    "client|tidb":[[215,292]],
+    "tidb|pd":[[300,205]],
+    "tidb|tikv1":[[478,175]],
+    "tidb|tikv2":[[480,290]],
+    "tidb|tikv3":[[478,425]],
+    "tikv1|tikv2":[[606,222]],
+    "tikv2|tikv3":[[606,378]],
+    "tikv1|r1":[[758,140]],
+    "tikv2|r2":[[758,300]],
+    "tikv3|r3":[[758,460]]
+  };
 
-  { num:"STEP 3 / 9", title:"Optimizer：CBO 选计划",
-    desc:"优化器用统计信息（等深直方图 / CMSketch / Top-N）估每一步行数，算出各计划代价，取总体最低者。id 是主键 ⇒ 点查，estRows=1。",
-    src:D+"statistics",
-    hl:["n-tidb"], edges:[], path:null, plan:"pt" },
+  var EDGES = [
+    ["client","tidb"],["tidb","pd"],
+    ["tidb","tikv1"],["tidb","tikv2"],["tidb","tikv3"],
+    ["tikv1","tikv2"],["tikv2","tikv3"],
+    ["tikv1","r1"],["tikv2","r2"],["tikv3","r3"]
+  ];
 
-  { num:"STEP 4 / 9", title:"生成分布式执行计划",
-    desc:"计划里 cop[tikv] 表示下推到 TiKV coprocessor 执行，root 表示回 TiDB 执行。优化目标：尽量下推，减少传输。",
-    src:D+"explain-overview",
-    hl:["n-tidb"], edges:[], path:null, plan:"scan" },
-
-  { num:"STEP 5 / 9", title:"PD 授时：取 start_ts",
-    desc:"分布式事务需要全局单调递增时间戳（TSO，物理毫秒 + 逻辑计数）。start_ts 同时是本事务读到的一致性快照版本。",
-    src:D+"tso",
-    hl:["n-pd"], edges:["e-tidb-pd"], path:["tidb","pd","tidb"], plan:null },
-
-  { num:"STEP 6 / 9", title:"按 Key 定位 Region，找 Leader",
-    desc:"用 id=42 算出编码后的 key，按 [StartKey, EndKey) 区间定位到一个 Region；该 Region 的三副本构成 Raft Group，读写都走 Leader。",
-    src:D+"tidb-storage",
-    hl:["n-tikv2"], edges:["e-tidb-t2","e-t1-t2","e-t2-t3"], path:["tidb","tikv2"], plan:null },
-
-  { num:"STEP 7 / 9", title:"Coprocessor 下推执行",
-    desc:"点查/谓词被下推到 TiKV，在 Region 级别本地完成，只把结果回传 TiDB。这就是 cop[tikv]。",
-    src:D+"glossary",
-    hl:["n-tikv2"], edges:[], path:null, plan:"scan" },
-
-  { num:"STEP 8 / 9", title:"RocksDB SeekPrefix + MVCC",
-    desc:"TiKV 不直接写盘，先写 RocksDB（持久化有序 KV Map）。同一 key 追加版本号实现 MVCC；用 SeekPrefix(<key,start_ts>) 定位第一个 ≥ 该版本的记录。",
-    src:D+"tidb-storage",
-    hl:["n-r2"], edges:["e-t2-r2"], path:["tikv2","r2"], plan:null },
-
-  { num:"STEP 9 / 9", title:"返回结果",
-    desc:"TiKV 把行回传 TiDB，root 侧组装结果集，经协议层返回客户端。整条链路闭环。写语句则在此前插入 prewrite→commit 的 2PC，并把 Raft 日志复制到多数派。",
-    src:D+"optimistic-transaction",
-    hl:["n-tidb","n-client"], edges:["e-tidb-t2","e-c-tidb"], path:["r2","tikv2","tidb","client"], plan:"pt" }
-];
-
-const $ = id => document.getElementById(id);
-const nodes = [...document.querySelectorAll(".node")];
-const edges = [...document.querySelectorAll(".edge")];
-const planRows = [...document.querySelectorAll(".plan div[data-k]")];
-const packet = $("packet");
-
-let i = -1, playing = false, timer = null, raf = null;
-
-function clearHL(){ nodes.forEach(n=>n.classList.remove("hl")); edges.forEach(e=>e.classList.remove("hl")); }
-function clearPlan(){ planRows.forEach(r=>r.classList.remove("on")); }
-
-function render(idx){
-  const s = stages[idx];
-  $("num").textContent = s.num;
-  $("title").textContent = s.title;
-  $("desc").textContent = s.desc;
-  const a = $("src"); a.href = s.src; a.textContent = "来源：" + s.src.replace("https://","");
-  clearHL(); clearPlan();
-  (s.hl||[]).forEach(id => $(id).classList.add("hl"));
-  (s.edges||[]).forEach(id => $(id).classList.add("hl"));
-  if(s.plan) $(`div[data-k="${s.plan}"]`).classList.add("on");
-  if(s.path) animate(s.path); else hidePacket();
-}
-
-function hidePacket(){ packet.setAttribute("opacity","0"); packet.setAttribute("cx",-20); }
-function seg(a,b,t){ return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t]; }
-
-function animate(pathKeys){
-  cancelAnimationFrame(raf);
-  const pts = pathKeys.map(k=>N[k]);
-  const segs = [];
-  for(let j=0;j<pts.length-1;j++) segs.push([pts[j],pts[j+1]]);
-  const total = segs.length, dur = 620;
-  const t0 = performance.now();
-  packet.setAttribute("opacity","1");
-  function frame(now){
-    const p = Math.min(1,(now-t0)/dur);
-    const pos = p*total;
-    const k = Math.min(total-1, Math.floor(pos));
-    const local = pos - k;
-    const [x,y] = seg(segs[k][0], segs[k][1], local);
-    packet.setAttribute("cx",x); packet.setAttribute("cy",y);
-    if(p<1) raf = requestAnimationFrame(frame);
+  function cr(pts){
+    if(pts.length < 2) return "";
+    var d = "M" + pts[0][0] + "," + pts[0][1];
+    for(var i=0;i<pts.length-1;i++){
+      var p0 = pts[i-1]||pts[i], p1 = pts[i], p2 = pts[i+1], p3 = pts[i+2]||pts[i+1];
+      var c1x = p1[0] + (p2[0]-p0[0])/6, c1y = p1[1] + (p2[1]-p0[1])/6;
+      var c2x = p2[0] - (p3[0]-p1[0])/6, c2y = p2[1] - (p3[1]-p1[1])/6;
+      d += "C" + c1x.toFixed(1) + "," + c1y.toFixed(1) + " " +
+                 c2x.toFixed(1) + "," + c2y.toFixed(1) + " " + p2[0] + "," + p2[1];
+    }
+    return d;
   }
-  raf = requestAnimationFrame(frame);
-}
+  function pairPts(a,b){ return [NODE[a]].concat(BEND[a+"|"+b]||[], [NODE[b]]); }
+  function routePts(keys){
+    var out = [];
+    for(var i=0;i<keys.length-1;i++){
+      var seg = pairPts(keys[i], keys[i+1]);
+      if(i>0) seg = seg.slice(1);
+      out = out.concat(seg);
+    }
+    return out;
+  }
 
-function led(on){ $("led").classList.toggle("live", on); $("ledtxt").textContent = on?"running":"idle"; }
+  /* ---------------- steps ---------------- */
+  var MICRO_AT = [
+    [60,430],[300,430],[300,430],[300,430],[60,120],
+    [300,430],[300,430],[300,430],[300,430]
+  ];
 
-function next(){
-  if(i >= stages.length-1){ stop(); return; }
-  i++; render(i);
-  if(playing){ clearTimeout(timer); timer = setTimeout(next, 1700); }
-  else led(false);
-}
-function play(){
-  if(i >= stages.length-1){ reset(); }
-  playing = true; led(true); $("play").textContent = "❚❚ 暂停";
-  if(i < 0){ next(); } else { clearTimeout(timer); timer = setTimeout(next, 900); }
-}
-function stop(){ playing = false; led(false); $("play").textContent = "▶ 运行"; clearTimeout(timer); }
-function reset(){ stop(); i=-1; clearHL(); clearPlan(); hidePacket();
-  $("num").textContent = "STEP 0 / 9"; $("title").textContent = "准备就绪";
-  $("desc").textContent = "点击「运行」或「下一步」，看这条 SQL 如何在 TiDB 里走完一生。";
-  const a=$("src"); a.href=D+"tidb-computing"; a.textContent="来源：PingCAP 官方文档";
-}
+  var STEPS = [
+    { act:"ACT I · 发起", stage:"协议", title:"客户端发送 SQL",
+      desc:"客户端把语句封装成 MySQL 协议包，发往 TiDB Server。计算层无状态、各节点完全等价，前面挂一层负载均衡即可水平扩展。",
+      src:D+"tidb-computing", focus:["n-client","n-tidb"], route:["client","tidb"], form:"bits",
+      eng:'<div class="eng-title">MySQL 协议包</div>'+
+          '<div class="eng-code"><span class="k">COM_QUERY</span>\nSELECT name FROM users\nWHERE id = 42;</div>'+
+          '<div class="eng-note">无状态计算层：任一 TiDB 节点都能接住这条语句。</div>' },
 
-$("play").onclick = () => playing ? stop() : play();
-$("step").onclick = () => { stop(); next(); };
-$("reset").onclick = reset;
+    { act:"ACT II · 理解", stage:"解析", title:"Parser：文本 → 语法树",
+      desc:"TiDB 先做词法与语法分析，把字符串逐字符切成 token，再拼成抽象语法树（AST）；随后语义校验确认表、列与类型真实存在。",
+      src:D+"sql-optimization-concepts", focus:["n-tidb"], route:null, form:null,
+      eng:'<div class="eng-title">抽象语法树 AST</div>'+
+          '<pre class="eng-tree">Query\n└── SelectStmt\n    ├── Fields : name\n    ├── From   : users\n    └── Where  : id = 42</pre>'+
+          '<div class="eng-note">错误在这一层就被拦下：语法不合法 / 表不存在。</div>' },
 
-reset();
+    { act:"ACT II · 理解", stage:"优化", title:"Optimizer：CBO 选计划",
+      desc:"优化器借助统计信息（等深直方图 / CMSketch / Top-N）估算每个候选计划的行数与代价，取总体代价最低者。id 是主键 ⇒ 走点查，estRows = 1。",
+      src:D+"statistics", focus:["n-tidb"], route:null, form:null,
+      eng:'<div class="eng-title">CBO 代价估算</div>'+
+          '<table class="eng-tbl"><tr><th>候选计划</th><th>estRows</th><th>代价</th></tr>'+
+          '<tr><td>TableFullScan</td><td>1,000</td><td>高</td></tr>'+
+          '<tr class="on"><td>Point_Get</td><td>1</td><td>最低 ✓</td></tr></table>'+
+          '<div class="eng-note">统计信息越准，估算越准；它决定走点查还是扫表。</div>' },
+
+    { act:"ACT II · 理解", stage:"计划", title:"生成分布式执行计划",
+      desc:"计划里 cop[tikv] 表示该算子下推到 TiKV 的 Coprocessor 本地执行，root 表示最终回 TiDB 汇总。优化目标是尽量下推，减少跨节点数据搬运。",
+      src:D+"explain-overview", focus:["n-tidb"], route:null, form:null,
+      eng:'<div class="eng-title">分布式执行计划</div>'+
+          '<pre class="eng-tree">Point_Get          root       estRows:1\n└─ TableRowIDScan  cop[tikv]  users</pre>'+
+          '<div class="eng-note">cop[tikv] = 下推 TiKV；root = 回 TiDB 执行。</div>' },
+
+    { act:"ACT III · 定点", stage:"授时", title:"PD 授时：取 start_ts",
+      desc:"分布式事务需要全局单调递增的时间戳（TSO = 物理毫秒 + 逻辑计数）。start_ts 同时充当本事务读取的一致性快照版本。",
+      src:D+"tso", focus:["n-pd","n-tidb"], route:["tidb","pd","tidb"], form:"clock",
+      eng:'<div class="eng-title">全局授时 TSO</div>'+
+          '<div class="eng-clock">4418273401<span>start_ts = 物理毫秒 + 逻辑计数</span></div>'+
+          '<div class="eng-note">这个时间戳决定本事务「看到」数据的哪个版本。</div>' },
+
+    { act:"ACT III · 定点", stage:"定位", title:"按 Key 定位 Region，找到 Leader",
+      desc:"用 id = 42 算出编码后的 key，按 [StartKey, EndKey) 区间落进某个 Region；该 Region 的三副本构成一个 Raft Group，读写都走 Leader。",
+      src:D+"tidb-storage", focus:["n-tikv1","n-tikv2","n-tikv3","n-tidb"], route:["tidb","tikv2"], form:"key",
+      eng:'<div class="eng-title">Key 空间 → Region</div>'+
+          '<div class="eng-ruler"><span>…</span><span class="r">[ k12 , k35 )</span><span>…</span></div>'+
+          '<div class="eng-kv">Region <b>#1042</b> · Leader <b>TiKV #2</b><br>三副本 Raft · 读写都走 Leader</div>'+
+          '<div class="eng-note">Region 默认 256 MiB，随数据增长自动分裂调度。</div>' },
+
+    { act:"ACT IV · 取数", stage:"下推", title:"Coprocessor 下推执行",
+      desc:"点查与谓词被下推到 TiKV，在 Region 级别本地完成，只把结果回传 TiDB。这正是计划里的 cop[tikv]。",
+      src:D+"glossary", focus:["n-tikv2"], route:null, form:null,
+      eng:'<div class="eng-title">下推执行</div>'+
+          '<div class="eng-cmp">'+
+          '<div><span class="lbl">未下推</span>TiKV 全量扫描 → 跨网络传回 TiDB 再过滤</div>'+
+          '<div class="on"><span class="lbl">点查下推</span>TiKV 本地定位 → 只回传 1 行</div></div>'+
+          '<div class="eng-note">能下推的尽量下推，是分布式数据库省流量的关键。</div>' },
+
+    { act:"ACT IV · 取数", stage:"取数", title:"RocksDB SeekPrefix + MVCC",
+      desc:"TiKV 不直接写盘，而是写入 RocksDB 这一持久化的有序 KV Map。同一个 key 追加不同版本号实现 MVCC；用 SeekPrefix(<key, start_ts>) 找到第一个不小于该版本的记录。",
+      src:D+"tidb-storage", focus:["n-r2","n-tikv2"], route:["tikv2","r2"], form:"seek",
+      eng:'<div class="eng-title">RocksDB · MVCC 版本</div>'+
+          '<pre class="eng-tree">key = users/42\n ├─ ts=4418273405  Alice  ← 更晚的写入\n ├─ ts=4418273180  Alice  ← 本事务可见 ✓\n └─ ts=4418209002  Alice</pre>'+
+          '<div class="eng-note">SeekPrefix(&lt;key, start_ts&gt;) 取第一个 ≥ 版本的记录。</div>' },
+
+    { act:"ACT V · 归来", stage:"返回", title:"返回结果",
+      desc:"TiKV 把行回传 TiDB，root 侧组装结果集，经协议层返回客户端，整条链路闭环。若是写语句，则在此前插入 prewrite → commit 的两阶段提交，并把 Raft 日志复制到多数派。",
+      src:D+"optimistic-transaction", focus:["n-tidb","n-client","n-tikv2"], route:["r2","tikv2","tidb","client"], form:"row", trail:"Alice",
+      eng:'<div class="eng-title">结果集</div>'+
+          '<table class="eng-tbl"><tr><th>name</th></tr><tr class="on"><td>Alice</td></tr></table>'+
+          '<div class="eng-note">root 组装结果 → 协议层 → 客户端。查询闭环。</div>' }
+  ];
+
+  var TABS = ["发起","解析","优化","计划","授时","定位","下推","取数","返回"];
+
+  var $ = function(id){ return document.getElementById(id); };
+  var scene = $("scene"), route = $("route"), form = $("form"), micro = $("micro"), streamG = $("stream");
+  var nodeEls = Array.prototype.slice.call(document.querySelectorAll(".node"));
+  var BASE = {x:0,y:0,w:1000,h:620};
+  var view = {x:0,y:0,w:1000,h:620};
+  var camTarget = {x:0,y:0,w:1000,h:620};
+  var cur = -1, playing = false, timer = null;
+
+  /* ---- build curved edges ---- */
+  var edgeMap = {};
+  (function(){
+    var g = $("edges");
+    EDGES.forEach(function(pr){
+      var a = pr[0], b = pr[1];
+      var p = document.createElementNS(SVGNS, "path");
+      p.setAttribute("class", "edge" + ((a.indexOf("tikv")===0 && b.indexOf("tikv")===0) ? " dash" : ""));
+      p.setAttribute("id", "e-" + a + "-" + b);
+      p.setAttribute("d", cr(pairPts(a,b)));
+      g.appendChild(p);
+      edgeMap[a+"|"+b] = p; edgeMap[b+"|"+a] = p;
+    });
+  })();
+
+  /* ---- timeline ---- */
+  var tl = $("timeline");
+  TABS.forEach(function(t,idx){
+    var b = document.createElement("button");
+    b.className = "tl";
+    b.innerHTML = '<span class="bar"><i></i></span><span class="n">0'+(idx+1)+'</span><span class="t">'+t+'</span>';
+    b.onclick = function(){ stop(); go(idx); };
+    tl.appendChild(b);
+  });
+  var tlEls = Array.prototype.slice.call(tl.children);
+
+  function clearHL(){
+    nodeEls.forEach(function(n){ n.classList.remove("hl","pulse"); });
+    for(var k in edgeMap){ edgeMap[k].classList.remove("hl"); }
+  }
+  function easeInOut(t){ return t<0.5 ? 2*t*t : -1+(4-2*t)*t; }
+
+  /* trailing 0/1 data stream behind the payload */
+  var TRAIL = 22, tbits = [];
+  (function(){
+    for(var i=0;i<TRAIL;i++){
+      var b = document.createElementNS(SVGNS, "text");
+      b.setAttribute("class", "bit" + (i===0 ? " hot" : ""));
+      b.setAttribute("x", 0); b.setAttribute("y", 0);
+      b.textContent = (i%2) ? "1" : "0";
+      streamG.appendChild(b); tbits.push(b);
+    }
+  })();
+  function hideTrail(){ for(var i=0;i<tbits.length;i++) tbits[i].style.opacity = "0"; }
+
+  /* ---- camera ---- */
+  function cameraTo(focus, extra){
+    var pts = [];
+    (focus||[]).forEach(function(id){
+      var r = $(id).querySelector("rect");
+      var x=parseFloat(r.getAttribute("x")), y=parseFloat(r.getAttribute("y"));
+      var w=parseFloat(r.getAttribute("width")), h=parseFloat(r.getAttribute("height"));
+      pts.push([x,y]); pts.push([x+w,y+h]);
+    });
+    (extra||[]).forEach(function(p){ pts.push(p); });
+    if(!pts.length){ camTarget = {x:BASE.x,y:BASE.y,w:BASE.w,h:BASE.h}; return; }
+    var minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+    pts.forEach(function(p){
+      minx=Math.min(minx,p[0]); miny=Math.min(miny,p[1]);
+      maxx=Math.max(maxx,p[0]); maxy=Math.max(maxy,p[1]);
+    });
+    var pad=64, ar=BASE.w/BASE.h;
+    var cx=(minx+maxx)/2, cy=(miny+maxy)/2;
+    var w=(maxx-minx)+pad*2, h=(maxy-miny)+pad*2;
+    if(w/h < ar) w=h*ar; else h=w/ar;
+    w=Math.min(w,BASE.w*1.02); h=Math.min(h,BASE.h*1.02);
+    var tx=cx-w/2, ty=cy-h/2;
+    tx=Math.max(BASE.x-4, Math.min(tx, BASE.x+BASE.w-w+4));
+    ty=Math.max(BASE.y-4, Math.min(ty, BASE.y+BASE.h-h+4));
+    camTarget={x:tx,y:ty,w:w,h:h};
+  }
+  function camTick(){
+    var k=0.12;
+    ["x","y","w","h"].forEach(function(p){
+      var d=camTarget[p]-view[p];
+      if(Math.abs(d)>0.4) view[p]+=d*k; else view[p]=camTarget[p];
+    });
+    scene.setAttribute("viewBox", view.x.toFixed(1)+" "+view.y.toFixed(1)+" "+view.w.toFixed(1)+" "+view.h.toFixed(1));
+  }
+
+  /* ---- travelling payload ---- */
+  var travel = null, formTick = null, fBits = null;
+
+  function fchip(label,w,cls){
+    return '<g class="fchip '+(cls||'')+'"><rect x="'+(-w/2)+'" y="-12" width="'+w+'" height="24" rx="7"/>'+
+           '<text y="4" text-anchor="middle">'+label+'</text></g>';
+  }
+  var FORMS = {
+    bits: function(){
+      var s = "0101100101010110";
+      return '<text class="fb" text-anchor="middle" y="4">'+
+        s.split("").map(function(c){ return "<tspan>"+c+"</tspan>"; }).join("")+'</text>';
+    },
+    tokens: function(){
+      return '<g transform="translate(-72,0)">'+fchip("SELECT",62)+'</g>'+
+             fchip("users",56)+
+             '<g transform="translate(72,0)">'+fchip("id=42",56)+'</g>';
+    },
+    plan:  function(){ return fchip("Point_Get · cop[tikv]",172); },
+    clock: function(){
+      return '<g transform="translate(-72,0)"><circle class="fcring" r="13"/>'+
+             '<line id="fhand" x1="0" y1="0" x2="0" y2="-11"/></g>'+
+             '<text class="fdigit" x="-50" y="5">4418273401</text>';
+    },
+    key:   function(){ return fchip("[k12 , k35)",112); },
+    push:  function(){ return fchip("cop[tikv] ↓",122,"push"); },
+    seek:  function(){ return fchip("SeekPrefix(key,start_ts)",190); },
+    row:   function(){ return fchip("name = Alice",122,"row"); }
+  };
+
+  function mountForm(kind){
+    formTick = null; fBits = null;
+    form.innerHTML = (kind && FORMS[kind]) ? FORMS[kind]() : "";
+    if(kind === "bits"){
+      fBits = form.querySelectorAll("tspan");
+      formTick = function(ts){
+        var ph = ts/110;
+        for(var i=0;i<fBits.length;i++){
+          var o = 0.30 + 0.70*Math.max(0, Math.sin(ph - i*0.6));
+          fBits[i].setAttribute("opacity", o.toFixed(2));
+        }
+      };
+    } else if(kind === "clock"){
+      var hand = form.querySelector("#fhand");
+      formTick = function(ts){
+        var a = ((ts % 4000)/4000)*360;
+        if(hand) hand.setAttribute("transform","rotate("+a.toFixed(1)+")");
+      };
+    }
+  }
+
+  function startTravel(keys, glyphs){
+    if(!keys || keys.length<2){ travel=null; route.style.opacity="0"; form.style.opacity="0"; hideTrail(); return; }
+    var pts = routePts(keys);
+    route.setAttribute("d", cr(pts));
+    var len = route.getTotalLength();
+    route.setAttribute("stroke-dasharray", len);
+    route.setAttribute("stroke-dashoffset", len);
+    route.style.opacity = "1";
+    form.style.opacity = "1";
+    hideTrail();
+    travel = { len:len, t0:null, dur:Math.max(1200, (pts.length-1)*420), glyphs:glyphs||"01" };
+  }
+  function hidePacket(){ travel=null; route.style.opacity="0"; form.style.opacity="0"; hideTrail(); }
+
+  /* ---- per-stage in-scene micro interactions ---- */
+  function card(title){
+    return '<rect class="mcard" x="0" y="0" width="240" height="112" rx="12"/>'+
+           '<text class="mtitle" x="14" y="22">'+title+'</text>';
+  }
+  function mtok(i,label,x,y,w){
+    return '<g class="mtok" data-i="'+i+'" transform="translate('+x+','+y+')">'+
+           '<rect x="'+(-w/2)+'" y="-10" width="'+w+'" height="20" rx="5"/>'+
+           '<text y="3.5">'+label+'</text></g>';
+  }
+
+  var MICRO = [
+    /* 0 发起 */ function(){
+      return { html: card("MySQL 协议包")+
+        '<text class="mcode" x="14" y="50">→ COM_QUERY  ·  SELECT name</text>'+
+        '<text class="mcode" x="14" y="72">   FROM users WHERE id=42;</text>'+
+        '<text class="mnote" x="14" y="98">1 个协议包 · 请求应答式往返</text>' };
+    },
+    /* 1 解析 */ function(){
+      var labels=["SELECT","name","FROM","users","WHERE","id=42"];
+      var h = card("Parser · 词法 → 语法");
+      for(var i=0;i<6;i++){
+        var row = i<3?0:1, col = i%3;
+        h += mtok(i, labels[i], 47+col*73, 50+row*27, 66);
+      }
+      h += '<text class="mnote" id="mast" x="14" y="100" opacity=".28">AST · SelectStmt(users, id=42)</text>';
+      return { html:h, tick:function(ts,t0){
+        var step = Math.floor((ts-t0)/430);
+        var k = step % 9;
+        var toks = micro.querySelectorAll(".mtok");
+        for(var i=0;i<toks.length;i++) toks[i].classList.toggle("on", k===i);
+        var ast = micro.querySelector("#mast");
+        if(ast) ast.setAttribute("opacity", k>=6 ? ".95" : ".28");
+      }};
+    },
+    /* 2 优化 */ function(){
+      return { html: card("CBO 代价估算")+
+        '<text class="mlabel" x="14" y="50">TableFullScan · estRows 1000</text>'+
+        '<rect class="mbar dim" id="mb1" x="14" y="57" width="0" height="9" rx="4"/>'+
+        '<text class="mlabel" x="14" y="86">Point_Get · estRows 1</text>'+
+        '<rect class="mbar" id="mb2" x="14" y="93" width="0" height="9" rx="4"/>'+
+        '<text class="mok" id="mok" x="176" y="101" opacity="0">✓ 选中</text>',
+        tick:function(ts,t0){
+          var p = Math.min(1,(ts-t0)/750);
+          var b1=micro.querySelector("#mb1"), b2=micro.querySelector("#mb2"), ok=micro.querySelector("#mok");
+          if(b1) b1.setAttribute("width",(p*200).toFixed(1));
+          if(b2) b2.setAttribute("width",(p*54).toFixed(1));
+          if(ok) ok.setAttribute("opacity", p>0.7 ? "1" : "0");
+        }};
+    },
+    /* 3 计划 */ function(){
+      return { html: card("分布式执行计划")+
+        '<text class="mcode" x="14" y="52">Point_Get           root</text>'+
+        '<text class="mcode" x="14" y="76">└─ TableRowIDScan  cop[tikv]</text>'+
+        '<rect class="mbar" id="mpd" x="150" y="64" width="76" height="16" rx="5" opacity="0"/>',
+        tick:function(ts){
+          var r = micro.querySelector("#mpd");
+          if(r) r.setAttribute("opacity", (0.25+0.55*Math.abs(Math.sin(ts/520))).toFixed(2));
+        }};
+    },
+    /* 4 授时 */ function(){
+      return { html: card("TSO · start_ts")+
+        '<g transform="translate(52,72)"><circle class="mring" r="26"/>'+
+        '<line id="mhand" x1="0" y1="0" x2="0" y2="-21"/></g>'+
+        '<text class="mdigit" x="94" y="66" id="mts">4418273401</text>'+
+        '<text class="mnote" x="94" y="88">物理毫秒 + 逻辑计数</text>',
+        tick:function(ts){
+          var a = ((ts % 4000)/4000)*360;
+          var h = micro.querySelector("#mhand");
+          if(h) h.setAttribute("transform","rotate("+a.toFixed(1)+")");
+          var d = micro.querySelector("#mts");
+          if(d) d.textContent = "441827340" + (1 + Math.floor((ts/500)%8));
+        }};
+    },
+    /* 5 定位 */ function(){
+      return { html: card("Key 空间 → Region")+
+        '<g class="mruler">'+
+        '<rect x="14" y="48" width="68" height="28" rx="5"/><text x="48" y="66" text-anchor="middle">…</text>'+
+        '<rect class="r" x="86" y="48" width="70" height="28" rx="5"/><text class="r" x="121" y="66" text-anchor="middle">[k12,k35)</text>'+
+        '<rect x="160" y="48" width="66" height="28" rx="5"/><text x="193" y="66" text-anchor="middle">…</text>'+
+        '</g>'+
+        '<g class="mkey" id="mkey" transform="translate(121,20)"><rect x="-17" y="-9" width="34" height="18" rx="5"/><text y="3.5">k=42</text></g>'+
+        '<text class="mnote" x="14" y="98">命中 Region #1042 · Leader = TiKV #2</text>',
+        tick:function(ts,t0){
+          var p = Math.min(1,(ts-t0)/900);
+          var e = easeInOut(p);
+          var g = micro.querySelector("#mkey");
+          if(g) g.setAttribute("transform","translate(121,"+(20+44*e).toFixed(1)+")");
+        }};
+    },
+    /* 6 下推 */ function(){
+      return { html: card("下推执行 cop[tikv]")+
+        '<text class="mlabel" x="14" y="50">未下推</text>'+
+        '<text class="mbits" id="mpa" x="78" y="50">0100101101001011010</text>'+
+        '<text class="mlabel ok" x="14" y="80">下推</text>'+
+        '<text class="mbits ok" x="78" y="80">1</text>'+
+        '<text class="mnote" x="120" y="80">← 只回传 1 行</text>'+
+        '<text class="mnote" x="14" y="101">TiKV 本地过滤 · 少搬数据</text>',
+        tick:function(ts,t0){
+          var s = "0100101101001011010";
+          var off = Math.floor((ts-t0)/80) % s.length;
+          var el = micro.querySelector("#mpa");
+          if(el) el.textContent = s.slice(off) + s.slice(0,off);
+        }};
+    },
+    /* 7 取数 */ function(){
+      return { html: card("RocksDB · MVCC")+
+        '<g class="mvrow" id="mv0"><text class="ts" x="14" y="50">ts=4418273405</text><text x="132" y="50">Alice</text></g>'+
+        '<g class="mvrow" id="mv1"><text class="ts" x="14" y="72">ts=4418273180</text><text x="132" y="72">Alice</text></g>'+
+        '<g class="mvrow" id="mv2"><text class="ts" x="14" y="94">ts=4418209002</text><text x="132" y="94">Alice</text></g>'+
+        '<rect id="mscan" x="14" y="36" width="212" height="16" rx="4" opacity=".5"/>',
+        tick:function(ts,t0){
+          var p = Math.min(1,(ts-t0)/1100), e = easeInOut(p);
+          var sc = micro.querySelector("#mscan");
+          if(sc) sc.setAttribute("y", (36 + 22*e).toFixed(1));
+          var r1 = micro.querySelector("#mv1");
+          if(r1) r1.classList.toggle("on", p>0.6);
+        }};
+    },
+    /* 8 返回 */ function(){
+      return { html: card("结果集返回")+
+        '<text class="mcode" x="14" y="50">root 组装 → 协议层 → 客户端</text>'+
+        '<g transform="translate(24,80)">'+
+        '<g class="fchip row"><rect x="-60" y="-12" width="120" height="24" rx="7"/><text y="4" text-anchor="middle">name = Alice</text></g></g>'+
+        '<text class="mcheck" id="mck" x="150" y="86" opacity="0">✓ 1 row</text>',
+        tick:function(ts,t0){
+          var ck = micro.querySelector("#mck");
+          if(ck) ck.setAttribute("opacity", (ts-t0)>500 ? "1" : "0");
+        }};
+    }
+  ];
+
+  function buildMicro(idx, t0){
+    var m = MICRO[idx];
+    microTick = null;
+    if(!m){ micro.innerHTML=""; return; }
+    var res = m();
+    micro.innerHTML = res.html || "";
+    micro.setAttribute("transform","translate("+MICRO_AT[idx][0]+","+MICRO_AT[idx][1]+")");
+    if(res.tick) microTick = function(ts){ res.tick(ts, t0); };
+  }
+  var microTick = null;
+
+  /* ---- master loop ---- */
+  var now = 0;
+  function frame(ts){
+    now = ts;
+    camTick();
+    if(travel){
+      if(travel.t0 === null) travel.t0 = ts;
+      var t = Math.min(1, (ts-travel.t0)/travel.dur);
+      var e = easeInOut(t);
+      route.setAttribute("stroke-dashoffset", (travel.len*(1-e)).toFixed(1));
+      var p = route.getPointAtLength(travel.len*e);
+      form.setAttribute("transform","translate("+p.x.toFixed(1)+","+p.y.toFixed(1)+")");
+      var spacing = 15;
+      for(var i=0;i<tbits.length;i++){
+        var pos = travel.len*e - (i+1)*spacing;
+        var b = tbits[i];
+        if(pos<0 || pos>travel.len){ b.style.opacity="0"; continue; }
+        var q = route.getPointAtLength(pos);
+        b.setAttribute("x", q.x.toFixed(1)); b.setAttribute("y", q.y.toFixed(1));
+        var gi = Math.floor(pos/spacing);
+        var gl = travel.glyphs;
+        b.textContent = gl[((gi%gl.length)+gl.length)%gl.length];
+        b.style.opacity = (i===0) ? "0.95" : String(Math.max(0.05, 1-(i+1)/TRAIL));
+      }
+    }
+    if(formTick) formTick(ts);
+    if(microTick) microTick(ts);
+    requestAnimationFrame(frame);
+  }
+
+  /* ---- render ---- */
+  function render(idx){
+    var s = STEPS[idx];
+    if(!s) return;
+    cur = idx;
+    scene.classList.add("spot");
+    clearHL();
+    (s.focus||[]).forEach(function(id){
+      var el=$(id); if(!el) return;
+      el.classList.add("hl");
+      if(id==="n-pd" || (id==="n-tikv2" && idx===5)) el.classList.add("pulse");
+    });
+    (s.route||[]).forEach(function(k,j){
+      if(j===0) return;
+      var e = edgeMap[s.route[j-1]+"|"+k];
+      if(e) e.classList.add("hl");
+    });
+
+    mountForm(s.form);
+    if(s.route && s.route.length>1) startTravel(s.route, s.trail);
+    else hidePacket();
+
+    buildMicro(idx, now);
+    cameraTo(s.focus, MICRO_AT[idx] ? [[MICRO_AT[idx][0], MICRO_AT[idx][1]],
+                                       [MICRO_AT[idx][0]+240, MICRO_AT[idx][1]+112]] : null);
+
+    $("p-num").textContent = ("0"+(idx+1)).slice(-2);
+    $("p-stage").textContent = s.stage;
+    $("p-title").textContent = s.title;
+    $("p-desc").textContent = s.desc;
+    $("p-eng").innerHTML = s.eng;
+    $("act").textContent = s.act;
+    $("actidx").textContent = "第 "+(idx+1)+" 幕 / 共 9 幕";
+    var a = $("p-src"); a.href = s.src; a.textContent = s.src.replace("https://","");
+
+    tlEls.forEach(function(el,j){
+      el.classList.toggle("on", j===idx);
+      el.classList.toggle("done", j<idx);
+    });
+  }
+
+  function next(){
+    if(cur >= STEPS.length-1){ stop(); return; }
+    render(cur+1);
+    if(playing){ clearTimeout(timer); timer=setTimeout(next, 3200); }
+  }
+  function go(idx){
+    if(idx<0||idx>=STEPS.length) return;
+    render(idx);
+    if(playing){ clearTimeout(timer); timer=setTimeout(next, 3200); }
+  }
+  function play(){
+    if(cur >= STEPS.length-1) reset(false);
+    hideIntro();
+    playing = true; $("play").textContent = "❚❚ 暂停";
+    if(cur < 0){ render(0); }
+    clearTimeout(timer); timer = setTimeout(next, 3200);
+  }
+  function stop(){ playing=false; $("play").textContent="▶ 播放"; clearTimeout(timer); }
+  function reset(clearIntroHide){
+    stop();
+    cur=-1; clearHL(); hidePacket();
+    form.innerHTML=""; micro.innerHTML=""; formTick=null; microTick=null;
+    scene.classList.remove("spot");
+    cameraTo(null);
+    $("p-num").textContent="01"; $("p-stage").textContent="待机";
+    $("p-title").textContent="准备就绪";
+    $("p-desc").textContent="点击「开始观看」，跟随这条 SQL 走完它在 TiDB 里的一生。";
+    $("p-eng").innerHTML='<div class="eng-title">等待开始</div><div class="eng-note">这条点查将经过 9 个环节：解析 → 优化 → 授时 → 定位 → 下推 → 取数 → 返回。</div>';
+    $("act").textContent="ACT I · 发起"; $("actidx").textContent="第 1 幕 / 共 9 幕";
+    var a=$("p-src"); a.href=D+"tidb-computing"; a.textContent="docs.pingcap.com/tidb/stable/tidb-computing";
+    tlEls.forEach(function(el){ el.classList.remove("on","done"); });
+    if(clearIntroHide!==false) showIntro();
+  }
+
+  /* ---- intro ---- */
+  var intro = $("intro");
+  function hideIntro(){ intro.classList.add("hide"); }
+  function showIntro(){ intro.classList.remove("hide"); }
+  $("start").onclick = function(){ play(); };
+
+  /* ---- controls ---- */
+  $("play").onclick = function(){ playing ? stop() : play(); };
+  $("step").onclick = function(){ stop(); hideIntro(); if(cur<0) render(0); else next(); };
+  $("reset").onclick = function(){ reset(true); };
+
+  document.addEventListener("keydown", function(e){
+    if(e.code==="Space"){ e.preventDefault(); playing?stop():play(); }
+    else if(e.code==="ArrowRight"){ stop(); hideIntro(); if(cur<0) render(0); else next(); }
+    else if(e.code==="ArrowLeft"){ stop(); hideIntro(); go(Math.max(0,cur-1)); }
+  });
+
+  requestAnimationFrame(frame);
+  reset(true);
+})();
 </script>
 </body>
 </html>
