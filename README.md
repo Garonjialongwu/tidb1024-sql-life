@@ -16,7 +16,7 @@ python3 -m http.server # 然后访问 http://localhost:8000
 
 ## 部署（GitHub Pages）
 仓库根目录即站点根，`index.html` 为入口。`.github/workflows/pages.yml` 已配好：
-push 到 `main` 后自动发布到 `https://<用户名>.github.io/<仓库名>/`。
+push 到 `main` 后自动发布到 `https://Garonjialongwu.github.io/tidb1024-sql-life/`。
 首次需在仓库 Settings → Pages → Source 选 **GitHub Actions**。
 
 ## 内容准确性
