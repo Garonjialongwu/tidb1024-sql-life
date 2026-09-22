@@ -15,9 +15,9 @@ python3 -m http.server # 然后访问 http://localhost:8000
 ```
 
 ## 部署（GitHub Pages）
-仓库根目录即站点根，`index.html` 为入口。`.github/workflows/pages.yml` 已配好：
-push 到 `main` 后自动发布到 `https://Garonjialongwu.github.io/tidb1024-sql-life/`。
-首次需在仓库 Settings → Pages → Source 选 **GitHub Actions**。
+仓库根目录即站点根，`index.html` 为入口，`.nojekyll` 已置（不做 Jekyll 处理）。
+在仓库 Settings → Pages → Source 选 **Deploy from a branch** → Branch `main` → `/ (root)` → Save，
+即可访问 `https://Garonjialongwu.github.io/tidb1024-sql-life/`。
 
 ## 内容准确性
 技术解读稿见 [`sql-life-technical-notes.md`](./sql-life-technical-notes.md)，
