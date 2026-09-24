@@ -1,0 +1,1034 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据库的前世今生：从一张表格到 TiDB · A 版 · TiDB 1024</title>
+<meta name="description" content="A 版 · 数据建筑学：同一批等距数据立方体，随滚动在十幕间真实重排，讲清数据如何从文件走到分布式数据库。代码生成 SVG，未使用图像生成模型。">
+<!--
+  A 版 · 数据建筑学（等距立方体 ＋ 滚动形变 ＋ 时代色带）
+  两形同源（硬要求）
+  ------------------------------------------------------------------
+  全篇母题画面由单一函数 renderStageAt(p) 生成：
+    p ∈ [0,9] 为「滚动进度」，整数处为十幕关键帧，小数处为相邻两幕的方块形变插值。
+  交互长页滚动时实时调用它；竖版长图（?long=1）与移动端单列在整数 p=i 处调用同一函数。
+  严禁两版各写一套 SVG。
+-->
+<style>
+  :root{
+    /* 有限色板：深蓝灰底 ＋ 青（主）/ 琥珀（次）/ 红（痛点）/ 紫（点缀） */
+    --bg:#0b0e14; --panel:#121826; --panel2:#0e141f; --line:#28303f; --line2:#3a4658;
+    --ink:#f2f5fa; --mid:#a3aec0; --dim:#98a4b6;
+    --teal:#31d6c8; --amber:#e8ad52; --red:#ff6f66; --violet:#a98bf0;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);font:16px/1.8 var(--sans);-webkit-font-smoothing:antialiased}
+  b{color:#fff}
+  .pain{color:#ff9a90;font-weight:600}
+  .ok{color:var(--teal);font-weight:600}
+
+  .progress{position:fixed;top:0;left:0;height:2px;width:0;background:linear-gradient(90deg,var(--amber),var(--teal));z-index:30}
+  .topbar{position:fixed;top:0;left:0;right:0;z-index:20;display:flex;align-items:center;gap:14px;
+    padding:11px 22px;background:rgba(13,16,21,.82);backdrop-filter:blur(9px);border-bottom:1px solid var(--line)}
+  .topbar .t{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .topbar .sub{color:var(--mid);font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .topbar .badge{font:13px/1 var(--mono);color:var(--teal);border:1px solid var(--line2);
+    background:rgba(49,214,200,.09);border-radius:999px;padding:5px 10px;white-space:nowrap;flex:none}
+  .spacer{flex:1}
+
+  #scrolly{display:grid;grid-template-columns:minmax(0,1.06fr) minmax(330px,.94fr);
+    max-width:1520px;margin:0 auto;padding-top:50px}
+  .stageCol{position:sticky;top:50px;height:calc(100vh - 50px);display:flex;align-items:center;
+    justify-content:center;padding:26px 26px 26px 44px}
+  .stage{position:relative;width:100%;max-width:780px;aspect-ratio:16/10;
+    max-height:calc(100vh - 130px);border-radius:16px;overflow:hidden;
+    background:radial-gradient(120% 120% at 70% 8%,#1b2634 0%,#0f1520 55%,#0b0f16 100%);
+    box-shadow:0 22px 60px rgba(0,0,0,.5),inset 0 0 0 1px var(--line)}
+  .floor{position:absolute;inset:0;background-image:
+    linear-gradient(rgba(120,150,190,.06) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(120,150,190,.06) 1px,transparent 1px);
+    background-size:34px 34px;-webkit-mask-image:linear-gradient(#000 38%,transparent);mask-image:linear-gradient(#000 38%,transparent)}
+  body.mode-scrolly .floor{animation:floordrift 26s linear infinite}
+  @keyframes floordrift{0%{background-position:0 0,0 0}100%{background-position:34px 34px,34px 34px}}
+  .motes{position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden}
+  body.mode-long .motes,body.mode-stack .motes{display:none}
+  .motes i{position:absolute;bottom:-12px;width:3px;height:3px;border-radius:50%;
+    background:rgba(150,224,255,.6);box-shadow:0 0 7px rgba(120,210,255,.55);animation:rise linear infinite}
+  @keyframes rise{0%{transform:translateY(0) scale(.7);opacity:0}10%{opacity:.85}90%{opacity:.5}100%{transform:translateY(-260px) scale(1);opacity:0}}
+  /* 星空视差层（仅背景，无 SVG 形状；两形一致） */
+  .stars{position:absolute;inset:0;z-index:0;pointer-events:none;opacity:.85;
+    background-image:
+      radial-gradient(1.3px 1.3px at 40px 60px,rgba(210,232,255,.9),transparent 55%),
+      radial-gradient(1px 1px at 178px 138px,rgba(180,215,255,.7),transparent 55%),
+      radial-gradient(1.1px 1.1px at 298px 44px,rgba(232,240,255,.8),transparent 55%),
+      radial-gradient(1.4px 1.4px at 92px 224px,rgba(200,225,255,.6),transparent 55%),
+      radial-gradient(1px 1px at 258px 252px,rgba(220,235,255,.7),transparent 55%),
+      radial-gradient(1px 1px at 140px 190px,rgba(190,220,255,.5),transparent 55%);
+    background-size:340px 300px;background-repeat:repeat}
+  body.mode-scrolly .stars{animation:stardrift 46s linear infinite}
+  @keyframes stardrift{0%{background-position:0 0}100%{background-position:340px 300px}}
+  /* Scene 1 文件方块：指针划过时轻微无规则抖动（仅 scrolly） */
+  body.mode-scrolly svg[data-i="1"]:hover g.cube{animation:jit .42s steps(2,end) infinite}
+  body.mode-scrolly svg[data-i="1"]:hover g.cube:nth-child(3n){animation-name:jit2;animation-duration:.31s}
+  @keyframes jit{0%{transform:translate(0,0) rotate(0)}50%{transform:translate(.8px,-.6px) rotate(.4deg)}100%{transform:translate(-.7px,.5px) rotate(-.35deg)}}
+  @keyframes jit2{0%{transform:translate(0,0)}50%{transform:translate(-.9px,.7px)}100%{transform:translate(.6px,-.5px)}}
+  /* Scene 4 主键→外键连线脉冲（悬停本幕时） */
+  body.mode-scrolly svg[data-i="4"]:hover .pkfk{animation:fkpulse 1.5s ease-in-out infinite}
+  @keyframes fkpulse{0%,100%{stroke-opacity:.4}50%{stroke-opacity:1}}
+  /* Scene 5 四形态卡片悬停浮动 */
+  body.mode-scrolly svg[data-i="5"]:hover .s5u{animation:s5float 2.4s ease-in-out infinite}
+  body.mode-scrolly svg[data-i="5"]:hover .s5u:nth-child(odd){animation-delay:-1.1s}
+  @keyframes s5float{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.2px)}}
+  #stageSvg{position:relative;z-index:2;display:block;width:100%;height:100%}
+  .era-chip{position:absolute;left:13px;top:11px;z-index:3;font:13px/1 var(--mono);color:var(--ink);
+    background:rgba(11,14,20,.72);border:1px solid var(--line2);border-radius:999px;padding:6px 12px;backdrop-filter:blur(4px)}
+  .erabar{position:absolute;left:14px;right:14px;bottom:36px;z-index:3;height:8px;border-radius:5px;
+    background:linear-gradient(90deg,#6b4f2a,#8a6a33,#2f9e94,#31d6c8)}
+  .eralabels{position:absolute;left:14px;right:14px;bottom:13px;z-index:3;display:flex;justify-content:space-between;
+    font:700 13px/1 var(--mono);color:#b6c0d0;letter-spacing:.05em}
+  .eramark{position:absolute;left:14px;bottom:31px;z-index:4;width:16px;height:18px;margin-left:-8px;border-radius:5px;
+    background:rgba(255,255,255,.92);box-shadow:0 0 0 1px rgba(0,0,0,.25),0 0 16px rgba(47,208,196,.8);transition:left .12s linear}
+
+  .stream{padding-bottom:30px}
+  .chapter{min-height:84vh;display:flex;flex-direction:column;justify-content:center;
+    padding:76px 52px 76px 36px;border-bottom:1px dashed var(--line)}
+  .chapter:last-child{border-bottom:0}
+  .chapter .kicker{font:600 13px/1.1 var(--mono);letter-spacing:.14em;color:var(--teal);text-transform:uppercase}
+  .chapter h2{font-size:clamp(23px,2.7vw,33px);line-height:1.3;margin:14px 0 18px;color:#fff;letter-spacing:.01em}
+  .chapter .lead{margin:0 0 16px;color:#d3dae6;font-size:17px}
+  .chapter ul{margin:0 0 16px;padding-left:22px}
+  .chapter li{margin:8px 0;color:#d3dae6}
+  .chapter .src{margin-top:auto;font-size:13px;color:var(--mid);border-top:1px dotted var(--line2);padding-top:13px}
+  .tag{display:inline-block;font:13px/1 var(--mono);border:1px solid var(--line2);border-radius:5px;
+    padding:3px 7px;margin-right:8px;background:rgba(255,255,255,.03);color:var(--mid)}
+
+  .rail{position:fixed;left:15px;top:50%;transform:translateY(-50%);z-index:15;display:none;flex-direction:column;gap:11px}
+  body.mode-scrolly .rail{display:flex}
+  .rail button{width:9px;height:9px;border-radius:50%;border:1px solid var(--line2);background:transparent;padding:0;cursor:pointer;transition:.2s}
+  .rail button:hover{border-color:var(--teal)}
+  .rail button.on{background:var(--teal);border-color:var(--teal);transform:scale(1.25)}
+
+  #stack{display:none}
+  .stack-scene{max-width:1040px;margin:0 auto;padding:34px 22px;border-bottom:1px solid var(--line)}
+  .stack-scene:last-child{border-bottom:0}
+  .stack-scene .panel{position:relative;aspect-ratio:16/10;border-radius:14px;overflow:hidden;
+    background:radial-gradient(120% 120% at 70% 8%,#1b2634 0%,#0f1520 55%,#0b0f16 100%);box-shadow:inset 0 0 0 1px var(--line)}
+  .stack-scene .panel svg{position:relative;z-index:2;display:block;width:100%;height:100%}
+  .stack-scene .kicker{font:600 13px/1.1 var(--mono);letter-spacing:.14em;color:var(--teal);text-transform:uppercase;margin-top:24px}
+  .stack-scene h2{font-size:clamp(21px,2.4vw,28px);line-height:1.32;margin:12px 0 14px;color:#fff}
+  .stack-scene .lead{margin:0 0 14px;color:#d3dae6;font-size:16.5px}
+  .stack-scene ul{margin:0 0 14px;padding-left:22px}
+  .stack-scene li{margin:7px 0;color:#d3dae6}
+  .stack-scene .src{font-size:13px;color:var(--mid);border-top:1px dotted var(--line2);padding-top:12px}
+
+  body.mode-stack #scrolly,body.mode-long #scrolly{display:none}
+  body.mode-stack #stack,body.mode-long #stack{display:block}
+
+  body.mode-long{background:#0b0e13}
+  body.mode-long .topbar,body.mode-long .progress,body.mode-long .rail{display:none}
+  #longhead{display:none}
+  body.mode-long #longhead{display:block;max-width:1040px;margin:0 auto;padding:52px 22px 8px}
+  #longhead .kicker{font:600 13px/1.1 var(--mono);letter-spacing:.14em;color:var(--teal)}
+  #longhead h1{font-size:38px;line-height:1.26;margin:16px 0 16px;color:#fff}
+  #longhead p{margin:0 0 12px;color:#d3dae6;max-width:820px;font-size:16.5px}
+  #longfoot{display:none}
+  body.mode-long #longfoot{display:block;max-width:1040px;margin:0 auto;padding:36px 22px 56px}
+  #longfoot h3{font-size:16px;margin:26px 0 12px;color:#fff}
+  #longfoot table{width:100%;border-collapse:collapse;font-size:13px}
+  #longfoot th,#longfoot td{border:1px solid var(--line2);padding:8px 10px;text-align:left;vertical-align:top;color:#d3dae6}
+  #longfoot th{background:rgba(255,255,255,.03);color:#fff}
+  #longfoot code{font-family:var(--mono);font-size:13px;word-break:break-all}
+  .src table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px;table-layout:fixed}
+  .src th,.src td{border:1px solid var(--line2);padding:7px 9px;text-align:left;vertical-align:top;word-break:break-word;color:#d3dae6}
+  .src th{background:rgba(255,255,255,.03);color:#fff}
+  .src code{font-family:var(--mono);font-size:13px;word-break:break-all}
+  .stack-scene table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;table-layout:fixed}
+  .stack-scene th,.stack-scene td{border:1px solid var(--line2);padding:7px 9px;text-align:left;vertical-align:top;word-break:break-word;color:#d3dae6}
+  .stack-scene th{background:rgba(255,255,255,.03);color:#fff}
+  .stack-scene code{font-family:var(--mono);font-size:13px;word-break:break-all}
+  .stack-scene table th.c1{width:130px}
+  .stack-scene table th.c3{width:280px}
+  @media (max-width:600px){
+    .stack-scene table,.src table,#longfoot table{table-layout:auto}
+    .stack-scene table th.c1,.stack-scene table th.c3{width:auto}
+    .stack-scene th,.stack-scene td,.src th,.src td,#longfoot th,#longfoot td{padding:6px 7px;overflow-wrap:anywhere}
+  }
+
+  footer.colophon{max-width:1040px;margin:0 auto;padding:36px 22px 76px;color:var(--mid);font-size:13.5px}
+  footer.colophon b{color:#fff}
+
+  svg text{font-family:var(--sans)}
+
+  /* ---- 参考「AI 数据侦探」站点的动效移植（A 版口径：只吸收 2/4/5/6/7；1/3/8 归 B 版，不做） ---- */
+  /* #2 细颗粒噪点（scrolly 层，长图不加噪，保持印刷级清晰） */
+  body.mode-scrolly::before{content:"";position:fixed;inset:0;z-index:9998;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E")}
+  /* #7 闪烁光标 / 呼吸状态点（打字机配套） */
+  .live{width:6px;height:6px;border-radius:50%;background:var(--teal);display:inline-block;margin-right:6px;
+    vertical-align:1px;box-shadow:0 0 9px var(--teal);animation:pulse 1.7s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
+  .caret{display:inline-block;width:6px;height:11px;margin-left:6px;background:var(--teal);
+    vertical-align:-1px;animation:blink 1.15s steps(1) infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+  /* #7 打字机「内审」状态行（随幕切换逐字敲出当前幕标） */
+  .typebar{position:absolute;left:14px;top:46px;z-index:3;max-width:64%;overflow:hidden;white-space:nowrap;
+    font:13px/1.5 var(--mono);color:#b6c0d0}
+  .typebar .caret{display:inline-block;margin-left:3px;vertical-align:-2px;width:5px;height:10px}
+  /* #2 多层径向氛围光（深层材质／纵深；用同款铺到长图 panel，两形一致） */
+  .stage::before,.stack-scene .panel::after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;
+    background:
+      radial-gradient(520px 320px at 82% 4%,rgba(47,208,196,.10),transparent 60%),
+      radial-gradient(460px 300px at 8% 96%,rgba(224,164,74,.07),transparent 60%),
+      radial-gradient(620px 360px at 50% 122%,rgba(166,120,232,.06),transparent 60%)}
+  /* #2 母题画面缓慢扫光（scrolly 层，不进入长图） */
+  .stage::after{content:"";position:absolute;inset:-40%;z-index:1;pointer-events:none;
+    background:linear-gradient(115deg,transparent 42%,rgba(160,220,255,.10) 50%,transparent 58%);
+    animation:sweep 8s ease-in-out infinite}
+  @keyframes sweep{0%{transform:translateX(-40%)}60%,100%{transform:translateX(40%)}}
+  .pg{position:absolute;inset:0;z-index:1;pointer-events:none;opacity:0;transition:opacity .35s;
+    background:radial-gradient(250px 200px at var(--mx,50%) var(--my,42%),rgba(47,208,196,.11),transparent 62%)}
+  .stage:hover .pg{opacity:1}
+  .rail button.on{box-shadow:0 0 0 4px rgba(47,208,196,.15)}
+
+  @media (prefers-reduced-motion: reduce){
+    .live,.caret,.stage::after,.pg{animation:none!important}
+    .motes{display:none} body.mode-scrolly .floor{animation:none}
+    body.mode-scrolly .stars,body.mode-scrolly svg g.cube,body.mode-scrolly .pkfk,body.mode-scrolly .s5u{animation:none!important}
+  }
+
+  @media (max-width:1100px){ .topbar .sub{display:none} }
+  @media (max-width:780px){ .chapter{padding:56px 24px} }
+</style>
+</head>
+<body>
+<noscript><p style="padding:40px">本页为滚动叙事长页，需要启用 JavaScript。母题画面为代码生成 SVG。</p></noscript>
+<div class="progress" id="progress"></div>
+<div id="app"></div>
+
+<script>
+/* ============================================================================
+   0. 母题：等距数据立方体（同一批方块，N=12）
+   ========================================================================== */
+const SCN=10, N=12, CUBE_S=16, CUBE_H=14;
+const INK='#f2f5fa', MID='#a3aec0', DIM='#98a4b6', LINE='#3a4658', LINE2='#28303f';
+const TEAL='#31d6c8', AMBER='#e8ad52', RED='#e2564c', VIOLET='#a98bf0';
+
+/* SVG 安全绘制区（viewBox 480×300，与舞台 16:10 同比例）：
+   顶部 HTML 覆盖带（era-chip / typebar）在 781px 最窄 scrolly 下沿 ≈ y91；
+   底部覆盖带（erabar / eralabels / eramark）上沿 ≈ y232。
+   全部方块顶面顶点统一 y∈[122,182]（含挤出＋落地影最深 ≤227），
+   Scene 4–7 装饰文字基线统一 ≤126（各自框体独立标题带），Scene 8 无方块、正文可整幅铺开。
+   由此任意 p 的方块簇既不越入上下覆盖带，也不与任何 SVG 文本相交。 */
+const SAFE_CY_MIN=122, SAFE_CY_MAX=182, SAFE_TEXT_BASE=126;
+
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp=(a,b,t)=>a+(b-a)*t;
+function hex2rgb(h){h=h.replace('#','');return[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];}
+function rgb2hex(r,g,b){const f=v=>('0'+Math.round(clamp(v,0,255)).toString(16)).slice(-2);return '#'+f(r)+f(g)+f(b);}
+function mixHex(a,b,t){const A=hex2rgb(a),B=hex2rgb(b);return rgb2hex(lerp(A[0],B[0],t),lerp(A[1],B[1],t),lerp(A[2],B[2],t));}
+function shade(hex,f){const c=hex2rgb(hex);return rgb2hex(c[0]*f,c[1]*f,c[2]*f);}
+
+/* 一枚等距立方体：(cx,cy)＝顶面顶点；s＝半宽；h＝侧高。三面明暗拉大＋顶面棱光＋落地影＝体块与纵深 */
+function isoCube(cx,cy,s,h,hex,op,scale,hl,boost,cls,rot){
+  const d=s*0.5, top=shade(hex,1.5+(boost||0)*0.35), left=shade(hex,0.72), right=shade(hex,0.44), edge=shade(hex,1.85);
+  const hlo=(hl===undefined?0.5:0.34+0.3*hl).toFixed(2);
+  const p=(x,y)=>`${x},${y}`;
+  const sc=clamp(scale||1,0.6,2.2);
+  const tf=rot?` transform="rotate(${rot.toFixed(2)} ${cx.toFixed(1)} ${cy.toFixed(1)})"`:'';
+  return `<g class="${cls||'cube'}"${tf} opacity="${op===undefined?1:op}">`
+    +`<ellipse cx="${cx.toFixed(1)}" cy="${(cy+s+h*0.98).toFixed(1)}" rx="${(s*1.06).toFixed(1)}" ry="${(s*0.4).toFixed(1)}" fill="#04060a" opacity="${(0.32*Math.min(sc,1.6)).toFixed(2)}"/>`
+    +`<polygon points="${p(cx-s,cy+d)} ${p(cx,cy+s)} ${p(cx,cy+s+h)} ${p(cx-s,cy+d+h)}" fill="${left}"/>`
+    +`<polygon points="${p(cx+s,cy+d)} ${p(cx,cy+s)} ${p(cx,cy+s+h)} ${p(cx+s,cy+d+h)}" fill="${right}"/>`
+    +`<polygon points="${p(cx,cy)} ${p(cx+s,cy+d)} ${p(cx,cy+s)} ${p(cx-s,cy+d)}" fill="${top}"/>`
+    +`<path d="M${cx-s} ${cy+d} L${cx} ${cy+s} L${cx+s} ${cy+d}" fill="none" stroke="${edge}" stroke-opacity="${hlo}" stroke-width="1"/>`
+    +`<path d="M${cx} ${cy} L${cx} ${cy+s}" fill="none" stroke="${top}" stroke-opacity=".45" stroke-width="1"/>`
+    +`</g>`;
+}
+const txt=(x,y,s,size,fill,anchor,weight,bl)=>`<text x="${x}" y="${y}" text-anchor="${anchor||'middle'}"${bl?` dominant-baseline="${bl}"`:''} font-size="${size||13}" fill="${fill||MID}" font-weight="${weight||400}">${s}</text>`;
+
+/* --- 视觉增强辅助：贝塞尔 / 光点 / 纸张 / 环形粒子（全部代码生成，零外链） --- */
+function bezPt(a,b,c,d,t){const m=1-t;
+  return [m*m*m*a[0]+3*m*m*t*b[0]+3*m*t*t*c[0]+t*t*t*d[0],
+          m*m*m*a[1]+3*m*m*t*b[1]+3*m*t*t*c[1]+t*t*t*d[1]];}
+function bezD(a,b,c,d){return `M${a[0].toFixed(1)} ${a[1].toFixed(1)} C${b[0].toFixed(1)} ${b[1].toFixed(1)} ${c[0].toFixed(1)} ${c[1].toFixed(1)} ${d[0].toFixed(1)} ${d[1].toFixed(1)}`;}
+function glowDot(cx,cy,r,c,o){return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" fill="${c}" opacity="${clamp(o,0,1).toFixed(2)}"/>`;}
+/* 环形轨道上的光纤粒子：ph 驱动公转（长图取整数相位静帧，确定性不变） */
+function orbitDots(cx,cy,rx,ry,ph,n,dir,phase,c,r){
+  let s='';for(let k=0;k<n;k++){const a=((phase||0)+k/n+(dir||1)*ph*0.09)*2*Math.PI% (2*Math.PI);
+    const x=cx+rx*Math.cos(a), y=cy+ry*Math.sin(a);
+    const tw=0.45+0.55*(0.5+0.5*Math.sin(a*3+ph*0.4+k));
+    s+=glowDot(x,y,r||1.6,c,tw*0.9);}
+  return s;}
+/* 带折角的 3D 纸张（Scene 5 · 文档） */
+function paperForm(cx,cy,s,h,hex,op,cls){
+  const d=s*0.5, fold=s*0.4;
+  return `<g class="${cls||'cube'}" opacity="${op}">`
+    +`<polygon points="${(cx-s).toFixed(1)},${cy} ${cx},${(cy+d).toFixed(1)} ${(cx+s).toFixed(1)},${cy} ${cx},${(cy-d).toFixed(1)}" fill="${shade(hex,1.2)}" opacity=".95"/>`
+    +`<polygon points="${(cx-s).toFixed(1)},${cy} ${cx},${(cy+d).toFixed(1)} ${cx},${(cy+d+h).toFixed(1)} ${(cx-s).toFixed(1)},${(cy+h).toFixed(1)}" fill="${shade(hex,0.62)}"/>`
+    +`<polygon points="${(cx+s).toFixed(1)},${cy} ${cx},${(cy+d).toFixed(1)} ${cx},${(cy+d+h).toFixed(1)} ${(cx+s).toFixed(1)},${(cy+h).toFixed(1)}" fill="${shade(hex,0.4)}"/>`
+    +`<polygon points="${(cx+s-fold).toFixed(1)},${cy} ${(cx+s).toFixed(1)},${cy} ${(cx+s).toFixed(1)},${(cy+fold*0.72).toFixed(1)}" fill="${mixHex(hex,'#ffffff',0.55)}" opacity=".95"/>`
+    +`<path d="M${(cx-s*0.55).toFixed(1)} ${(cy+d*0.2).toFixed(1)} H${(cx+s*0.4).toFixed(1)} M${(cx-s*0.55).toFixed(1)} ${(cy+d*0.55).toFixed(1)} H${(cx+s*0.22).toFixed(1)} M${(cx-s*0.55).toFixed(1)} ${(cy+d*0.9).toFixed(1)} H${(cx+s*0.1).toFixed(1)}" stroke="${shade(hex,1.7)}" stroke-opacity=".55" stroke-width="1" fill="none"/>`
+    +`</g>`;
+}
+
+/* 十幕关键帧：12 枚方块的顶面顶点坐标（真实重排的顺序对应）。
+   全部顶面顶点 y∈[122,182]、x∈[120,426]，保证含挤出＋落地影后的方块簇不越入上下覆盖带。 */
+const POS=[
+  /*0 封面*/[[132,126],[192,126],[252,126],[312,126],[132,152],[192,152],[252,152],[312,152],[132,178],[192,178],[252,178],[312,178]],
+  /*1 散沙*/[[140,176],[308,124],[126,138],[296,172],[214,124],[252,154],[156,128],[286,140],[130,166],[262,128],[196,158],[316,158]],
+  /*2 树  */[[210,122],[136,138],[210,138],[286,138],[120,154],[176,154],[248,154],[306,154],[150,172],[210,172],[268,172],[188,172]],
+  /*3 网  */[[314,152],[303,166],[273,176],[230,179],[187,176],[157,166],[146,152],[157,138],[187,128],[230,125],[273,128],[303,138]],
+  /*4 表  */[[104,148],[150,148],[196,148],[104,176],[150,176],[196,176],[284,148],[330,148],[376,148],[284,176],[330,176],[376,176]],
+  /*5 分流 */[[58.5,170],[82.5,170],[106.5,170],[163.5,170],[187.5,170],[211.5,170],[268.5,170],[292.5,170],[316.5,170],[373.5,170],[397.5,170],[421.5,170]],
+  /*6 分片 */[[69,150],[91,150],[113,150],[135,150],[207,150],[229,150],[251,150],[273,150],[345,150],[367,150],[389,150],[411,150]],
+  /*7 痛点 */[[150,188],[150.6,175],[151.2,162],[151.8,149],[152.4,136],[153,123],[184,172],[208,150],[178,192],[214,180],[122,166],[236,158]],
+  /*8 对症 */[[132,140],[190,140],[248,140],[306,140],[132,162],[190,162],[248,162],[306,162],[132,184],[190,184],[248,184],[306,184]],
+  /*9 收束 */[[132,140],[190,140],[248,140],[306,140],[132,162],[190,162],[248,162],[306,162],[132,184],[190,184],[248,184],[306,184]]
+];
+const OP=[1,1,1,1,1,1,1,1,0,1]; /* 第 8 幕方块隐藏，让「痛点→能力」图整幅说话 */
+const CSZ=[1,1,1,1,0.62,0.72,0.78,0.72,1,1]; /* 每幕立方体基准尺度（框内小方块幕收小，避免与框线/文字争位） */
+/* 各幕立方体自转角（度）：Scene 1「一盘散沙」＝散落、倾斜、角度各异；其余幕 0（保持正置）。 */
+const TILT=[]; TILT[1]=[-3.4,4.1,-5.2,2.6,-1.8,5.0,-4.4,3.2,-2.4,4.6,-3.0,1.9];
+
+/* 每幕唯一主焦点：滚动时在相邻两幕之间插值，焦点附近立方体放大（不再使用不透明实色体块）。 */
+const FOCUS=[[222,152],[220,150],[210,150],[230,152],[240,162],[240,170],[240,150],[152,156],[219,162],[219,162]];
+function focusScaleP(fx0,fy0,fx1,fy1,f,x,y){
+  const fx=lerp(fx0,fx1,f), fy=lerp(fy0,fy1,f);
+  const d=Math.hypot(x-fx,y-fy);
+  return 1+0.30*Math.pow(Math.max(0,1-d/85),1.5);
+}
+/* 方块总体不透明度：常规幕间保持 1；进入「无方块幕」（Scene 8）快速淡出（f≥0.42 即 0），
+   离开时延后升起（f≤0.58 为 0），确保与 Scene 8 正文任意时刻 0 共存。 */
+function cubeOpacity(i,j,f){
+  const a=OP[i], b=OP[j];
+  if(a===b) return a;
+  if(b<a) return a*Math.max(0,1-f/0.42);
+  return b*Math.max(0,(f-0.58)/0.42);
+}
+
+/* 时代配色：早期冷灰 → 中期暖金 → 后期青绿；痛点幕偏红 */
+function eraColor(i,j){
+  const t=clamp(i/9,0,1);
+  let c=mixHex('#8a94a6','#31d6c8',t);
+  const warm=mixHex('#d69a3a','#a98bf0',(j%3)/2);
+  c=mixHex(c,warm,0.14*((j*5)%4)/3);
+  if(i===7) c=mixHex(RED,c,0.35);
+  return c;
+}
+
+/* ============================================================================
+   1. 每幕的「场景元素」（框线 / 表头 / 连线 / 标签），在方块之下或之上
+   ========================================================================== */
+function line(x1,y1,x2,y2,o){return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" ${o}/>`;}
+function box(x,y,w,h,r,o){return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" ${o}/>`;}
+/* 沿线流动的小光点（相位由滚动进度 ph 驱动，长图取整数相位静帧） */
+function dotOnLine(x1,y1,x2,y2,t,r,c,o){return `<circle class="fdot" cx="${lerp(x1,x2,t).toFixed(1)}" cy="${lerp(y1,y2,t).toFixed(1)}" r="${r||2}" fill="${c||TEAL}" opacity="${o||0.85}"/>`;}
+const nodeLabel=(x,y,s,size,c)=>txt(x,y,s,size||13,c||MID,'middle',600);
+const topLabel=(x,y,s,size,c)=>txt(x,y,s,size||13,c||MID,'start',600);
+
+function decor(i,ph,t){
+  ph=(ph===undefined)?i:ph;
+  const P=POS[i];
+  let bg='', fg='';
+  if(i===0){
+    /* 数据宇宙的奇点：主立方体外环绕多圈光纤星环（缓慢公转）＋背景星空网格前后两层视差（随 p 微移）
+       ＋底部光影反射（随 idle 呼吸）＋幻影立方体（opacity≤0.18，暗示尚未展开的历史阶段） */
+    const C=[222,178];
+    /* 背景星空网格：前/后两层视差，幅度受限（远层慢、近层快），只铺方块区带、不触任何 SVG 文本 */
+    [[0,5,0.035,'#7f8ea6'],[1,11,0.06,'#a9c4e6']].forEach(([L,amp,op,col])=>{
+      const dx=(ph*amp*(L?1:-1)).toFixed(1), dy=(ph*amp*0.6*(L?-1:1)).toFixed(1);
+      let g='';
+      for(let gx=60;gx<=420;gx+=60) g+=`<path d="M${gx} 124 L${gx} 224" stroke="${col}" stroke-opacity="${op}"/>`;
+      for(let gy=126;gy<=224;gy+=16) g+=`<path d="M52 ${gy} L428 ${gy}" stroke="${col}" stroke-opacity="${(op*0.8).toFixed(3)}"/>`;
+      bg+=`<g transform="translate(${dx} ${dy})">${g}</g>`;
+    });
+    const rings=[[152,50,TEAL],[112,36,AMBER],[80,25,VIOLET]];
+    rings.forEach((rg,k)=>{
+      bg+=`<ellipse cx="${C[0]}" cy="${C[1]}" rx="${rg[0]}" ry="${rg[1]}" fill="none" stroke="${rg[2]}" stroke-opacity=".20" stroke-width="1" stroke-dasharray="${4+k*3} ${10+k*4}" stroke-dashoffset="${(-ph*14-k*6).toFixed(1)}"/>`;
+      fg+=orbitDots(C[0],C[1],rg[0],rg[1],ph,7+k*2,(k%2?-1:1),k*0.21,rg[2],1.5+k*0.2);
+    });
+    /* 底部光影反射：随 idle 呼吸（幅度受限；长图 t=0 → 静帧） */
+    const br=1+0.10*Math.sin(2*Math.PI*(t*0.5));
+    bg+=`<ellipse cx="222" cy="208" rx="${(74*br).toFixed(1)}" ry="${(14*(0.6+0.4*br)).toFixed(1)}" fill="${TEAL}" opacity="${(0.07*br).toFixed(3)}"/>`;
+    bg+=`<ellipse cx="222" cy="205" rx="${(46*br).toFixed(1)}" ry="${(8*(0.6+0.4*br)).toFixed(1)}" fill="${TEAL}" opacity="${(0.10*br).toFixed(3)}"/>`;
+    bg+=`<ellipse cx="222" cy="203" rx="${(22*br).toFixed(1)}" ry="${(4.5*(0.6+0.4*br)).toFixed(1)}" fill="#9df3ea" opacity="${(0.18*br).toFixed(3)}"/>`;
+    [[108,178,9],[336,174,8.5],[178,214,7.5]].forEach(([gx,gy,gs])=>{ bg+=isoCube(gx,gy,gs,gs*0.75,'#7d8aa0',0.16,0.9,0.4,0,'ghost'); });
+    fg+=txt(222,110,'数据库的前世今生',15,INK,'middle',700);
+  }
+  if(i===1){
+    /* 一盘散沙：散落方块 ＋ 半透明泛黄「文档图标＋标签」＋ 数据静电噪点（方块之间无连线） */
+    const tags=[[81,'file.csv'],[177,'user.txt'],[284,'report.xlsx'],[395,'photo.jpg']];
+    tags.forEach(([x,name])=>{
+      const w=Math.max(64,name.length*7.4+30), x0=x-w/2;
+      bg+=`<rect class="plate" x="${x0.toFixed(1)}" y="100" width="${w.toFixed(1)}" height="17" rx="4" fill="rgba(38,30,12,.66)" stroke="rgba(232,173,82,.4)"/>`;
+      bg+=`<g fill="none" stroke="#e8c07a" stroke-width="1.1" stroke-linejoin="round" opacity=".85"><path d="M${(x0+6).toFixed(1)} 103.5 h6 l4 3.5 v8 h-10 z"/><path d="M${(x0+12).toFixed(1)} 103.5 v3.5 h4"/></g>`;
+      fg+=txt(x0+21,112,name,13,'#f0c877','start',600);
+    });
+    const nz=[[96,140,1],[150,196,.8],[214,132,.7],[268,188,.9],[322,142,.6],[118,214,.5],[196,160,.55],[286,206,.7],[344,168,.5],[166,128,.6]];
+    nz.forEach(([x,y,o],k)=>{ bg+=`<path d="M${x} ${y} l${(k%2?7:-6)} ${(k%3?3:-4)}" stroke="#8fb0d8" stroke-opacity="${(o*0.5).toFixed(2)}" stroke-width="1"/>`;
+      bg+=glowDot(x+3,y+2,0.9,'#bcd6ef',o*0.5); });
+  }
+  if(i===2){
+    const E=[[0,1],[0,2],[0,3],[1,4],[1,5],[2,6],[3,7],[4,8],[5,9],[6,10],[7,11]];
+    E.forEach(([a,b])=> bg+=line(P[a][0],P[a][1]+16,P[b][0],P[b][1],`stroke="${TEAL}" stroke-opacity=".3" stroke-width="1.3"`));
+    E.forEach(([a,b],k)=> bg+=line(P[a][0],P[a][1]+16,P[b][0],P[b][1],`stroke="${TEAL}" stroke-opacity=".5" stroke-width="1.3" stroke-dasharray="5 13" stroke-dashoffset="${(-((ph*16+k*5)%18)).toFixed(1)}"`));
+    E.forEach(([a,b],k)=> fg+=dotOnLine(P[a][0],P[a][1]+16,P[b][0],P[b][1],(ph*0.5+k*0.19)%1,2.2));
+  }
+  if(i===3){
+    /* 网状模型：环形方块之间用交织重叠的贝塞尔指针连线，底部铺垫错综线框（能多对多，但凌乱） */
+    const R=P.map(pt=>[pt[0],pt[1]+13]);
+    const E=[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,8],[8,9],[9,10],[10,11],[11,0],
+             [0,4],[0,7],[1,5],[1,8],[2,6],[2,9],[3,7],[3,10],[4,8],[5,9],[5,11],[6,10],
+             [0,6],[2,8],[4,10],[1,7],[3,9]];
+    E.forEach(([a,b],k)=>{ const A=R[a], B=R[b];
+      const mx=(A[0]+B[0])/2+(k%2?1:-1)*16, my=(A[1]+B[1])/2+(k%3?12:-14);
+      bg+=`<path d="${bezD(A,[mx,my],[mx,my],B)}" fill="none" stroke="${TEAL}" stroke-opacity="${(0.10+0.05*(k%3)).toFixed(2)}" stroke-width="${(0.8+0.4*(k%2)).toFixed(2)}" stroke-dasharray="7 15" stroke-dashoffset="${(-((ph*34+k*9)%22)).toFixed(1)}"/>`;
+    });
+    E.forEach(([a,b],k)=>{ const A=R[a], B=R[b];
+      const mx=(A[0]+B[0])/2+(k%2?1:-1)*16, my=(A[1]+B[1])/2+(k%3?12:-14);
+      const pt2=bezPt(A,[mx,my],[mx,my],B,((ph*0.35+k*0.13)%1));
+      fg+=glowDot(pt2[0],pt2[1],1.9,TEAL,0.8); });
+    R.forEach(([x,y],k)=>{ fg+=glowDot(x,y,3.2,'#7ef0e4',0.5+0.3*Math.sin(ph*2+k)); fg+=glowDot(x,y,1.5,TEAL,0.95); });
+    for(let k=0;k<6;k++){ bg+=`<path d="M40 ${196+k*7} L440 ${188+k*8}" fill="none" stroke="${TEAL}" stroke-opacity=".07" stroke-width=".8"/>`;
+      bg+=`<path d="M60 ${188+k*8} L420 ${200+k*7}" fill="none" stroke="${VIOLET}" stroke-opacity=".06" stroke-width=".8"/>`; }
+  }
+  if(i===4){
+    /* 关系模型 · SQL：两张玻璃拟态「表」，行＝等距方块；金色主键(PK) → 珊瑚色外键(FK) 带方向流动 */
+    bg+=box(84,108,140,124,12,`class="plate" fill="rgba(20,30,46,.5)" stroke="${LINE2}"`);
+    bg+=box(84,108,140,20,12,`class="plate" fill="rgba(232,173,82,.12)"`);
+    bg+=line(84,128,224,128,`stroke="${LINE}"`);
+    fg+=txt(96,123,'用户表 users',13,AMBER,'start',700);
+    fg+=txt(216,123,'1970',13,DIM,'end',600);
+    bg+=box(256,108,140,124,12,`class="plate" fill="rgba(20,30,46,.5)" stroke="${LINE2}"`);
+    bg+=box(256,108,140,20,12,`class="plate" fill="rgba(169,139,240,.12)"`);
+    bg+=line(256,128,396,128,`stroke="${LINE}"`);
+    fg+=txt(268,123,'订单表 orders',13,VIOLET,'start',700);
+    fg+=txt(388,123,'1 对多',13,DIM,'end',600);
+    /* 主键 → 外键连线（class pkfk： hover 脉冲）＋方向箭头＋沿线流动光点 */
+    const pk=[104,148], fk=[284,176];
+    const c1=[170,132], c2=[210,196], A=[pk[0]+11,pk[1]+7], B=[fk[0]-11,fk[1]+7];
+    fg+=`<path class="pkfk" d="${bezD(A,c1,c2,B)}" fill="none" stroke="${TEAL}" stroke-width="1.8" stroke-opacity=".8"/>`;
+    fg+=`<path d="M${B[0]} ${B[1]} l-8 -4 l1 9 z" fill="${TEAL}" opacity=".9"/>`;
+    const tt=(ph*0.5)%1, pp=bezPt(A,c1,c2,B,tt);
+    fg+=glowDot(pp[0],pp[1],2.4,'#9df3ea',0.95);
+    bg+=box(64,212,84,18,5,`class="plate" fill="rgba(232,173,82,.16)" stroke="rgba(232,173,82,.7)"`);
+    fg+=`<g fill="none" stroke="#ffd98a" stroke-width="1.3" stroke-linecap="round"><circle cx="73" cy="221" r="3"/><path d="M76 221 H87 M83.5 221 v3.4 M87 221 v3.6"/></g>`;
+    fg+=txt(91,225,'主键 PK',13,'#ffd98a','start',600);
+    bg+=box(243,212,84,18,5,`class="plate" fill="rgba(255,111,102,.16)" stroke="rgba(255,111,102,.7)"`);
+    fg+=`<g fill="none" stroke="#ffb3ad" stroke-width="1.3" stroke-linecap="round"><path d="M252 221 a3.3 3.3 0 0 0 0 6.6 M258 221 a3.3 3.3 0 0 1 0 6.6 M252 224.3 H258"/></g>`;
+    fg+=txt(266,225,'外键 FK',13,'#ffb3ad','start',600);
+  }
+  if(i===5){
+    /* NoSQL 百花齐放：四张虚线卡片；卡内 3D 形态各不相同（KV/文档/列族/图 由 renderStageAt 绘制） */
+    [[36,82.5,'键值 KV'],[141,187.5,'文档'],[246,292.5,'列族'],[351,397.5,'图']]
+      .forEach(([x0,cx,lab])=>{ bg+=box(x0,112,93,116,12,`class="plate" fill="rgba(18,24,38,.56)" stroke="${LINE}" stroke-dasharray="5 4"`);
+        bg+=line(x0,130,x0+93,130,`stroke="${LINE}" stroke-opacity=".8"`);
+        fg+=txt(cx,126,lab,13,TEAL,'middle',700); });
+  }
+  if(i===6){
+    /* NewSQL 分布式：三节点 ＋ 分片穿梭 ＋ 节点间 Raft 副本一致性（虚→实同步）＋ 底部弹性伸缩条 */
+    bg+=box(28,104,424,104,14,`fill="none" stroke="${TEAL}" stroke-opacity=".4" stroke-dasharray="6 6"`);
+    [[36,102,'node-1'],[174,240,'node-2'],[312,378,'node-3']].forEach(([x0,cx,lab])=>{
+      bg+=box(x0,112,132,88,10,`class="plate" fill="rgba(18,24,38,.56)" stroke="${LINE}"`);
+      bg+=line(x0,130,x0+132,130,`stroke="${LINE}" stroke-opacity=".8"`);
+      fg+=txt(cx,126,lab,13,DIM,'middle',600); });
+    [[168,174],[306,312]].forEach(([xa,xb],k)=>{
+      const sync=((ph*0.5+k*0.5)%1);
+      bg+=`<line x1="${xa}" y1="178" x2="${xb}" y2="178" stroke="${TEAL}" stroke-opacity=".22" stroke-width="1.4" stroke-dasharray="5 5"/>`;
+      bg+=`<line x1="${xa}" y1="178" x2="${(xa+(xb-xa)*Math.min(1,sync*1.6)).toFixed(1)}" y2="178" stroke="${TEAL}" stroke-opacity=".85" stroke-width="1.8"/>`;
+      fg+=glowDot(lerp(xa,xb,sync),178,2,'#9df3ea',0.9); });
+    [0,1,2].forEach(k=>{ const y=212+k*8, px=54+(((ph*0.36+k*0.33)%1))*372;
+      bg+=`<rect x="54" y="${y}" width="372" height="5" rx="2.5" fill="rgba(255,255,255,.07)"/>`;
+      bg+=`<rect x="${(px-17).toFixed(1)}" y="${y}" width="34" height="5" rx="2.5" fill="${TEAL}" opacity=".85"/>`; });
+  }
+  if(i===7){
+    /* 当代真问题：摇摇欲坠的方块高塔＋顶部红色下压光晕；中段断裂的桥＋火花；右 OLTP/OLAP 与红叉同步 */
+    const pgl=0.5+0.5*Math.sin(ph*2);
+    bg+=`<path d="M126 118 L176 118 L160 134 L142 134 Z" fill="${RED}" opacity="${(0.14+0.10*pgl).toFixed(2)}"/>`;
+    bg+=`<ellipse cx="151" cy="128" rx="46" ry="11" fill="${RED}" opacity="${(0.10+0.10*pgl).toFixed(2)}"/>`;
+    bg+=`<path d="M96 170 Q150 158 200 166" fill="none" stroke="${AMBER}" stroke-opacity=".5" stroke-width="2" stroke-dasharray="7 5"/>`;
+    bg+=`<path d="M252 168 Q294 162 332 168" fill="none" stroke="${AMBER}" stroke-opacity=".5" stroke-width="2" stroke-dasharray="7 5"/>`;
+    [0,1,2,3].forEach(k=>{ const sx=214+((k*7+ph*30)%26), sy=160+((k%2)?4:-3);
+      fg+=`<path d="M${sx.toFixed(1)} ${sy} l5 -5 M${sx.toFixed(1)} ${sy} l-3 -7 M${sx.toFixed(1)} ${sy} l6 3" stroke="${RED}" stroke-opacity=".85" stroke-width="1.4" stroke-linecap="round" fill="none"/>`; });
+    bg+=box(300,112,144,64,10,`class="plate" fill="rgba(18,24,38,.56)" stroke="${LINE}"`);
+    bg+=box(300,184,144,44,10,`class="plate" fill="rgba(18,24,38,.56)" stroke="${LINE}"`);
+    bg+=`<path d="M372 176 L372 184" stroke="${RED}" stroke-width="1.6" stroke-dasharray="3 3"/>`;
+    bg+=`<path d="M368 180 l8 4 M376 180 l-8 4" stroke="${RED}" stroke-width="1.8" stroke-linecap="round"/>`;
+    fg+=txt(120,108,'单机：容量 / 并发到顶',13,'#ff9a90','start',700);
+    fg+=txt(444,108,'跨系统：数据要搬运',13,AMBER,'end',700);
+    fg+=txt(372,140,'OLTP · 事务',13,MID,'middle',600);
+    fg+=txt(372,212,'OLAP · 分析',13,MID,'middle',600);
+  }
+  if(i===8){
+    const pains=['单机容量到顶','高并发写入','弹性与成本','事务 / 分析割裂','分库分表风险','高可用与自愈'];
+    const caps=['水平扩展','实时 HTAP','分布式事务','多副本高可用','MySQL 协议兼容','部署形态'];
+    const lx=30, lw=150, cx0=300, cw=150, top=93, row=23, ch=21;
+    const t8=t||0;
+    const pulse=k=>0.5+0.5*Math.sin(2*Math.PI*(t8*0.5)+k*0.6);
+    bg+=`<rect x="28" y="74" width="424" height="164" fill="url(#g8)"/>`;
+    fg+=txt(105,88,'痛点',13,'#ff9a90','middle',700);
+    fg+=txt(240,88,'现代数据库挑战',13,'#cfe0f2','middle',700);
+    fg+=txt(375,88,'架构特征',13,TEAL,'middle',700);
+    const capIcon=(k,x,y)=>{
+      const o=`stroke="${TEAL}" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"`;
+      const inner=[
+        `<path d="M${x-5} ${y} H${x+5} M${x+5} ${y} l-3 -3 M${x+5} ${y} l-3 3 M${x-5} ${y} l3 -3 M${x-5} ${y} l3 3" ${o}/>`,
+        `<path d="M${x+2} ${y-5} L${x-3} ${y+1} H${x+1} L${x-1} ${y+5} L${x+4} ${y-1} H${x}" ${o}/>`,
+        `<circle cx="${x-3}" cy="${y}" r="2.1" ${o}/><circle cx="${x+4}" cy="${y}" r="2.1" ${o}/><path d="M${x-1} ${y} H${x+2}" ${o}/>`,
+        `<path d="M${x-5} ${y-2} H${x+5} M${x-4} ${y+1} H${x+4} M${x-3} ${y+4} H${x+3}" ${o}/>`,
+        `<path d="M${x-3} ${y-4} H${x-5} V${y+4} H${x-3} M${x+3} ${y-4} H${x+5} V${y+4} H${x+3}" ${o}/>`,
+        `<path d="M${x-5} ${y+1} H${x+5} V${y+4} H${x-5} Z M${x} ${y+1} V${y-4} M${x} ${y-4} l-2.5 3 M${x} ${y-4} l2.5 3" ${o}/>`
+      ][k];
+      return `<g opacity=".95">${inner}</g>`;
+    };
+    pains.forEach((p,k)=>{ const y=top+k*row;
+      fg+=box(lx,y,lw,ch,5,`class="plate" fill="rgba(226,86,76,.15)" stroke="rgba(226,86,76,.55)"`);
+      fg+=`<circle cx="${lx+11}" cy="${(y+ch/2).toFixed(1)}" r="2.4" fill="#ff9a90" opacity=".6"/>`;
+      fg+=txt(lx+22,y+ch*0.5,p,13,'#ffc0ba','start',600,'central'); });
+    caps.forEach((c,k)=>{ const y=top+k*row;
+      fg+=box(cx0,y,cw,ch,5,`class="plate" fill="rgba(49,214,200,.14)" stroke="rgba(49,214,200,.55)"`);
+      fg+=capIcon(k,cx0+11,y+ch/2);
+      fg+=txt(cx0+24,y+ch*0.5,c,13,'#b7f4ec','start',600,'central'); });
+    /* 聚合池：左痛点先汇聚到「现代数据库挑战」，再散点到右「架构特征」（取消 1:1 硬连线；连线红→青） */
+    const px=216, py=140, pw=48, ph=48, pcy=py+ph/2;
+    bg+=box(px,py,pw,ph,13,`class="plate" fill="rgba(24,34,52,.9)" stroke="rgba(150,190,230,.5)"`);
+    bg+=box(px,py,pw,ph,13,`fill="none" stroke="${TEAL}" stroke-opacity="${(0.3+0.4*pulse(0)).toFixed(2)}" stroke-dasharray="5 5" stroke-dashoffset="${(-(t8*10)%10).toFixed(1)}"`);
+    fg+=`<path d="M${px+12} ${py+17} H${px+pw-12} M${px+12} ${py+24} H${px+pw-17} M${px+12} ${py+31} H${px+pw-22}" stroke="${TEAL}" stroke-opacity=".7" stroke-width="2" stroke-linecap="round"/>`;
+    for(let k=0;k<3;k++) fg+=glowDot(px+pw-10,py+21+k*3,1.4,'#9df3ea',0.8);
+    pains.forEach((p,k)=>{ const y1=top+k*row+ch/2, cy=pcy+(k-2.5)*5, cA=[lx+lw,y1], cB=[lx+lw+18,y1], cC=[px-20,cy], cD=[px,cy];
+      fg+=`<path d="${bezD(cA,cB,cC,cD)}" fill="none" stroke="${RED}" stroke-opacity="${(0.35+0.4*pulse(k)).toFixed(2)}" stroke-width="1.3"/>`;
+      const gp=bezPt(cA,cB,cC,cD,((t8*0.5+k*0.15)%1));
+      fg+=glowDot(gp[0],gp[1],1.7,'#ffb3ad',0.8); });
+    caps.forEach((c,k)=>{ const y2=top+k*row+ch/2, cy=pcy+(k-2.5)*5, cA=[px+pw,cy], cB=[px+pw+20,cy], cC=[cx0-18,y2], cD=[cx0,y2];
+      fg+=`<path d="${bezD(cA,cB,cC,cD)}" fill="none" stroke="${TEAL}" stroke-opacity="${(0.35+0.4*pulse(k)).toFixed(2)}" stroke-width="1.3"/>`;
+      const gp=bezPt(cA,cB,cC,cD,((t8*0.5+0.5+k*0.15)%1));
+      fg+=glowDot(gp[0],gp[1],1.7,'#9df3ea',0.8); });
+  }
+  if(i===9){
+    /* 粒子升腾化星云：确定性点阵缓慢上浮（不向单点汇拢）＋顶部「TiDB」代码文字字标作坚实锚点（非官方 logo 图形） */
+    const nb=[[76,224,1.0],[126,238,0.8],[176,214,0.9],[236,232,1.1],[296,220,0.8],[352,240,1.0],[406,226,0.9],[96,196,0.6],[206,198,0.6],[316,200,0.6],[166,250,0.7],[276,252,0.7],[376,204,0.5],[56,242,0.6]];
+    nb.forEach(([x,y,o],k)=>{ const yy=y-(((ph*6)+k*0.3)%1)*5; bg+=glowDot(x,yy,o*1.7,mixHex(TEAL,'#cfeaff',0.5),0.12+0.12*(0.5+0.5*Math.sin(ph*1.4+k))); });
+    for(let k=0;k<4;k++){ const y=220+k*8;
+      bg+=`<line x1="40" y1="${y}" x2="440" y2="${y}" stroke="${TEAL}" stroke-opacity=".06" stroke-width=".9" stroke-dasharray="5 9" stroke-dashoffset="${(-((ph*16+k*5)%14)).toFixed(1)}"/>`; }
+    fg+=`<rect x="206" y="64" width="68" height="26" rx="8" fill="rgba(11,14,20,.72)" stroke="rgba(49,214,200,.5)"/>`;
+    fg+=txt(240,82,'TiDB',18,'#9df3ea','middle',700);
+  }
+  return {bg,fg};
+}
+
+/* ============================================================================
+   2. 单一渲染入口：renderStageAt(p) —— 长页滚动与长图 / 单列共用
+   ========================================================================== */
+/* Scene 9「数据增长 · 叠满 · 循环」：6 柱错速向上堆叠（4 高 ×6 列，共 24 枚），
+   密度递增至填满取景框 → 顶部微光溢出 → 回收重置（周期 5.2s）。
+   确定性：t=0 → u=0.70（约 70% 满）；?long=1 取 t=0；reduced-motion / 单列由 renderStack 取满帧（u≈0.94）。 */
+const GROW_P=5.2;
+function growth9(t){
+  const u=(0.70 + ((t||0)/GROW_P))%1;
+  const cols=[96,160,224,288,352,416], Hh=[4,4,4,4,4,4], gain=[1.16,0.94,1.10,0.90,1.12,1.00];
+  const order=[]; for(let l=0;l<4;l++) for(let jj=0;jj<6;jj++) if(l<Hh[jj]) order.push([jj,l]);
+  const gFade=clamp((1-u)/0.03,0,1);
+  const over=clamp((u-0.85)/0.15,0,1);
+  const boost=clamp((u-0.80)/0.20,0,1)*0.5;
+  const base=[TEAL,mixHex(TEAL,VIOLET,0.35),mixHex(TEAL,AMBER,0.35),mixHex(TEAL,'#8ad0ff',0.4),mixHex(TEAL,'#7fe0a8',0.4),mixHex(TEAL,VIOLET,0.58)];
+  const cubes=order.map(([jj,l],o)=>{
+    const a=clamp((u-(0.04+o*0.038))*gain[jj]*3.0,0,1);
+    return {x:cols[jj], y:184-l*28, scale:0.55+0.45*a, op:a*gFade, color:mixHex(base[jj],'#ffffff',Math.min(0.18,l*0.06)), o};
+  });
+  return {cubes,over,boost,u};
+}
+
+/* Scene 5 四形态：同一枚方块在「按幕」时化为 KV 键值 / 文档纸张 / 列族竖条 / 图节点（位置不变，形变无缝） */
+function formAt(mode,x,y,total,hex,op,hl,boost){
+  const s=CUBE_S*total, h=CUBE_H*(0.55+0.45*total);
+  if(mode===1) return paperForm(x,y,s,h,hex,op,'cube s5u');
+  if(mode===2) return isoCube(x,y,s*0.5,h*2.3,hex,op,total,hl,boost,'cube s5u');
+  if(mode===3) return isoCube(x,y,s*0.72,h*0.8,hex,op,total*0.72,hl,boost,'cube s5u')
+    +`<line x1="${(x-s*0.7).toFixed(1)}" y1="${(y+s*0.35).toFixed(1)}" x2="${(x-s*1.5).toFixed(1)}" y2="${(y+s*0.78).toFixed(1)}" stroke="${TEAL}" stroke-opacity=".5" stroke-width="1"/>`
+    +`<line x1="${(x+s*0.7).toFixed(1)}" y1="${(y+s*0.35).toFixed(1)}" x2="${(x+s*1.5).toFixed(1)}" y2="${(y+s*0.78).toFixed(1)}" stroke="${TEAL}" stroke-opacity=".5" stroke-width="1"/>`;
+  return isoCube(x,y-s*0.95,s*0.4,s*0.4,hex,op,total*0.4,hl,boost,'cube s5u')
+       + isoCube(x,y,s,h,hex,op,total,hl,boost,'cube s5u');
+}
+/* Scene 9 数据洪流：底部冷青 → 顶部荧光白绿的上升粒子（穿过底部虚线网格） */
+function stream9(t){
+  let s='';const T=(t||0);
+  for(let k=0;k<20;k++){
+    const x=54+((k*53)%372);
+    const p=((T*0.22+k*0.13)%1);
+    const y=252-p*152;
+    const col=mixHex('#5fd8e0','#eafff4',clamp((252-y)/152,0,1));
+    const o=0.25+0.5*Math.sin(Math.PI*p);
+    s+=glowDot(x,y,1.1+1.4*Math.sin(Math.PI*p),col,o*0.7);
+  }
+  return s;
+}
+
+function renderStageAt(p,t){
+  t=t||0;
+  let i=Math.floor(clamp(p,0,SCN-1)), f=clamp(p,0,SCN-1)-i;
+  if(i>=SCN-1){ i=SCN-1; f=0; }
+  const j=Math.min(i+1,SCN-1);
+  const opA=clamp(1-2*f,0,1), opB=clamp(2*f-1,0,1), op=cubeOpacity(i,j,f);
+  const dA=decor(i,p,t), dB=decor(j,p,t);
+  const fi=FOCUS[i]||FOCUS[0], fj=FOCUS[j]||FOCUS[SCN-1];
+  let s='<defs><linearGradient id="g8" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff6f66" stop-opacity=".10"/><stop offset="1" stop-color="#31d6c8" stop-opacity=".10"/></linearGradient></defs>';
+  if(opA>0.002) s+=`<g opacity="${opA}">${dA.bg}</g>`;
+  if(opB>0.002 && j!==i) s+=`<g opacity="${opB}">${dB.bg}</g>`;
+  const trans=(f>0.002 && f<0.998 && j!==i);
+  if(op>0.02){
+    if(j===9||i===9){
+      /* 数据增长：方块化为向上涌动的粒子流，穿过底部虚线网格；底部冷青 → 顶部荧光白绿 */
+      const dom9=(i===9)||(j===9&&opB>0.002);
+      const gs=growth9(t);
+      gs.cubes.forEach(c=>{ if(c.op<=0.01) return;
+        const hl=0.5+0.5*Math.sin(2*Math.PI*(t*0.28)+c.o*0.5);
+        const col=mixHex(c.color,mixHex('#8ef0c0','#ffffff',0.35*clamp((184-c.y)/84,0,1)),0.4);
+        s+=isoCube(c.x,c.y,CUBE_S*c.scale*0.82,CUBE_H*(0.5+0.4*c.scale),col,op*c.op,c.scale,hl,gs.boost);
+        if(dom9) s+=glowDot(c.x,c.y-2,3.2,col,op*c.op*0.5); });
+      if(dom9) s+=stream9(t);
+      if(gs.over>0.01){
+        s+=`<ellipse cx="256" cy="${(99-3*gs.over).toFixed(1)}" rx="${(12+52*gs.over).toFixed(1)}" ry="${(2+3*gs.over).toFixed(1)}" fill="${TEAL}" opacity="${(0.22*gs.over).toFixed(2)}"/>`;
+      }
+    } else if(i===0){
+      /* Scene 0：p=0 为一整块（含图内 caption）；p 0→1 期间裂解为 POS[1] 的 12 枚散落方块。 */
+      const blockA=clamp(1-f/0.55,0,1);
+      if(blockA>0.01){
+        const bs=1+0.02*Math.sin(2*Math.PI*(t*0.5));
+        s+=isoCube(222,122,52*bs*(1+0.10*f),CUBE_H*2.05*bs,mixHex('#8a94a6',TEAL,0.22),op*blockA,3.3,0.55,0);
+      }
+      const e=clamp((f-0.18)/0.72,0,1), ee=e*e*(3-2*e);
+      if(ee>0.02){
+        for(let k=0;k<N;k++){
+          const b=POS[1][k];
+          const sx=222+((k%4)-1.5)*9, sy=126+(Math.floor(k/4)-1)*11;
+          const x=lerp(sx,b[0],ee), y=lerp(sy,b[1],ee);
+          const c=mixHex(mixHex('#8a94a6',TEAL,0.22),eraColor(1,k),ee);
+          const sc=lerp(0.32,CSZ[1],ee);
+          const hl=0.5+0.5*Math.sin(2*Math.PI*(t*0.28)+k*0.2);
+          s+=isoCube(x,y,CUBE_S*sc,CUBE_H*(0.55+0.45*sc),c,op*ee,sc,hl,0,'cube',(TILT[1][k]||0)*ee);
+        }
+      }
+    } else {
+      for(let k=0;k<N;k++){
+        const a=POS[i][k], b=POS[j][k];
+        const d=(k/N)*0.35;
+        const uu=trans?clamp((f-d)/(1-0.35),0,1):f;
+        const om=1-uu, mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2-10;
+        let x=om*om*a[0]+2*om*uu*mx+uu*uu*b[0];
+        const y=om*om*a[1]+2*om*uu*my+uu*uu*b[1];
+        if(i===6||j===6) x+=5*Math.sin(2*Math.PI*(t*0.6)+k*1.7);   /* 分片在节点间穿梭 */
+        let c=mixHex(eraColor(i,k),eraColor(j,k),uu);
+        if(i===4||j===4){ if(k===0)c=mixHex(c,AMBER,0.82); else if(k===9)c=mixHex(c,RED,0.78); } /* 主键金 / 外键红 */
+        const baseS=lerp(CSZ[i],CSZ[j],uu)*focusScaleP(fi[0],fi[1],fj[0],fj[1],uu,x,y);
+        const bob=1.6*Math.sin(2*Math.PI*(t*0.5)+k*0.37);
+        const idle=1+0.02*Math.sin(2*Math.PI*(t*0.5)+k*0.37+1.1);
+        const total=baseS*idle;
+        const boost=trans?clamp(1-Math.abs(uu-0.5)/0.32,0,1):0;
+        const hl=0.5+0.5*Math.sin(2*Math.PI*(t*0.28)+x*0.03+k*0.2);
+        const rot=lerp(TILT[i]?TILT[i][k]:0,TILT[j]?TILT[j][k]:0,uu);
+        if(i===5||j===5) s+=formAt(Math.floor(k/3),x,y+bob,total,c,op,hl,boost);
+        else s+=isoCube(x,y+bob,CUBE_S*total,CUBE_H*(0.55+0.45*total),c,op,total,hl,boost,'cube',rot);
+      }
+    }
+  }
+  if(opA>0.002) s+=`<g opacity="${opA}">${dA.fg}</g>`;
+  if(opB>0.002 && j!==i) s+=`<g opacity="${opB}">${dB.fg}</g>`;
+  return `<svg data-i="${i}" viewBox="0 0 480 300" role="img" aria-label="母题画面 · 等距数据立方体随时代重排，焦点处立方体聚拢放大" preserveAspectRatio="xMidYMid meet">${s}</svg>`;
+}
+/* A 版的「唯一 SVG 入口」别名：与 B 版的 svgMarkup 等价（两形同源） */
+const svgMarkup=renderStageAt;
+
+/* ============================================================================
+   3. 文案（骨架成稿 · 无绝对化词 · 史实 / 主张分栏）—— 与 B 版共用
+   ========================================================================== */
+const COPY=[
+  {kicker:'SCENE 0 · 封面 / 引子',h2:'数据库的前世今生：从一张表格到 TiDB',
+   lead:'我们每天产生的数据，究竟被<b>怎么放、怎么找</b>？回到数据库这门「组织数据」的手艺，看它如何一路走到今天。',
+   src:'无（引子 · 概念）'},
+  {kicker:'SCENE 1 · 前世 · 一盘散沙',h2:'没有数据库的日子：数据就是一个个文件',
+   items:['数据分散在独立文件里，文件之间<b>没有关联</b>。',
+          '<span class="pain">冗余</span>：同一信息重复存，改一处、漏一处。',
+          '<span class="pain">查找低效</span>：想查关联，只能手动逐个翻。',
+          '<span class="pain">安全薄弱</span>：缺少权限控制，易泄露、易丢失。'],
+   src:'计算机史料 · 文件系统阶段（概念性叙述，不引产品主张）'},
+  {kicker:'SCENE 2 · 雏形 · 能存能查',h2:'雏形：从「一堆文件」到「统一管理」',
+   items:['<b>1968 · IBM IMS</b>：据记载为早期的数据库管理系统之一，采用<b>层次模型</b>（树形、一对多）。',
+          '优点：层级清晰、查找快，适合组织架构、家谱这类层级明确的数据。',
+          '<span class="pain">局限</span>：遇到「多对多」关系，层次模型难以表达。'],
+   src:'史实 · IBM IMS 1968'},
+  {kicker:'SCENE 3 · 进阶 · 网状模型',h2:'网状数据库：解决多对多，但更复杂',
+   items:['数据之间可任意关联，表达能力强于层次模型。',
+          '<span class="pain">代价</span>：结构复杂、维护门槛高，普通使用者难以直接操作。',
+          '代表路线：CODASYL 提出的网状模型，用指针表达记录之间的关系。'],
+   src:'史实 · 网状模型 / CODASYL 路线'},
+  {kicker:'SCENE 4 · 黄金时代 · 关系型 + SQL',h2:'把数据放回一张「表」：关系模型与 SQL',
+   items:['<b>1970 · E. F. Codd</b> 提出关系模型：数据即表格，表间以主键 / 外键关联。',
+          '<b>1979 · Oracle V2</b>：据记载为早期商业化的 SQL 关系数据库（<b>≠ 标准化</b>）。',
+          '<b>1986 · ANSI SQL-86（SQL1）</b>：SQL 正式标准化，ISO 于 1987 跟进。',
+          '随后的生态：DB2（1983）／SQL Server（商用 1989）／MySQL（1995）／PostgreSQL（1996 得名）。',
+          '优势：结构直观、查询高效、事务可靠（ACID）、SQL 通用。'],
+   src:'史实 · Codd 1970｜Oracle V2 1979｜ANSI SQL-86 1986｜DB2 1983｜SQL Server 1989｜MySQL 1995｜PostgreSQL 1996'},
+   {kicker:'SCENE 5 · 今生 · 百花齐放',h2:'数据量与并发激增：NoSQL 与关系型互补',
+   items:['背景：数据量与并发激增、结构多样，固定表结构开始吃力。',
+          '四类非关系型库：<b>键值</b>（缓存 / 会话）、<b>文档</b>（结构不定）、<b>列族</b>（海量结构化）、<b>图</b>（关联关系）。',
+          '关键：NoSQL 不是取代关系型，而是<b>互补</b>——核心交易仍走关系型，高并发 / 灵活结构交给 NoSQL。'],
+   src:'概念 · NoSQL 一词流行于 2009｜分类为通行共识'},
+  {kicker:'SCENE 6 · 分水岭 · NewSQL',h2:'NewSQL：既扩展，又不丢一致性',
+   lead:'历史的分水岭：单机数据库遇到容量与性能的<b>物理天花板</b>，而多数 NoSQL 在扩展上取得突破、却弱化了事务一致性。业界需要一条既能<b>横向弹性扩展</b>、又能保持强一致的「第三条道路」。',
+   items:['<b>NewSQL</b> 由此出现：融合关系型的可靠（事务 / 一致性）与 NoSQL 的横向扩展能力。',
+          '代表路线：分布式 + 强一致；TiDB 是这条路线上的<b>代表性探索者与实践者之一</b>。',
+          '当单机数据库遇到容量与性能天花板，分布式 + 强一致成了自然的下一步。'],
+   src:'概念 · NewSQL 分类（通行共识）｜相关能力见 docs.pingcap.com 概览'},
+  {kicker:'SCENE 7 · 痛点 · 当代真问题',h2:'当前大家真正头疼的六件事',
+   items:['<span class="pain">单机天花板</span>：容量与性能受单机限制，往上加机器并不容易。',
+          '<span class="pain">高并发写入</span>：峰值流量下，写入容易成为瓶颈。',
+          '<span class="pain">弹性与成本</span>：扩缩容不够灵活，闲时资源容易浪费。',
+          '<span class="pain">事务与分析割裂</span>：OLTP 与 OLAP 两套系统，数据需要同步搬运。',
+          '<span class="pain">分库分表的复杂度</span>：手工分片带来跨片事务与一致性风险。',
+          '<span class="pain">高可用与自愈</span>：故障切换与云上运维较多依赖人力。',
+           '行业共同困境：这些是各行业共同面临的结构性挑战，也是数据库架构从单机走向分布式的根本动力。'],
+   src:'来源 · 行业通行痛点（叙述性）'},
+  {kicker:'SCENE 8 · 现代化数据库 · TiDB 的实践',h2:'现代化数据库的演进方向：TiDB 的实践',
+   lead:'面对这些行业痛点，现代化的分布式数据库需要具备以下核心特征。',
+   items:['<b>水平扩展</b>：以增加节点承接容量与并发增长。',
+          '<b>实时 HTAP</b>：一套引擎同时服务事务与分析。',
+          '<b>分布式事务</b>：跨节点事务保持一致，降低手工分片复杂度。',
+          '<b>多副本高可用</b>：共识、故障自动切换，减少人工运维依赖。',
+          '<b>MySQL 协议兼容</b>：承接既有生态，降低迁移成本。',
+          '<b>部署形态</b>：自管（TiDB Operator）／托管（TiDB Cloud）。',
+          'TiDB 是这些架构理念的<b>代表性实践之一</b>：以原生分布式设计，回应这个时代对数据库的要求——例如以 MySQL 兼容降低迁移成本，以 Raft 保证高可用。'],
+   src:'来源 · 架构特征与陈述逐条对 docs.pingcap.com 概览'},
+  {kicker:'SCENE 9 · 收束',h2:'数据库的下一步：与持续增长的数据和 AI 一起进化',
+   lead:'回望这段历史，方向很清晰：数据在爆炸、场景在剧变，系统需要随需扩容。进入 AI 时代，训练数据、推理日志、实时指标对数据库的吞吐与实时性提出了更高的要求。',
+   items:['面对这个时代命题，分布式成为<b>自然方向</b>：让数据被自动安排位置，而不是人去迁就它。',
+          'TiDB 以水平扩展承接增长，用实时 HTAP 融合事务与分析，并以分布式事务与多副本守住一致性与可用性。',
+          '这不是某一家产品的独门绝技，而是数据库走向下一个时代的<b>基石</b>——TiDB 正在这条路上持续演进。'],
+   src:'来源 · docs.pingcap.com 概览（五大核心特性 / 实时 HTAP / 金融级高可用）'}
+];
+
+/* ============================================================================
+   4. 来源清单 · 与 B 版共用
+   ========================================================================== */
+const SOURCES=[
+  ['水平扩展','一键水平扩缩容：得益于存储计算分离，可按需对计算、存储分别在线扩容或缩容，对应用运维人员透明。','https://docs.pingcap.com/zh/tidb/stable/overview（五大核心特性）'],
+  ['实时 HTAP','行存储引擎 TiKV、列存储引擎 TiFlash；TiFlash 通过 Multi-Raft Learner 实时从 TiKV 复制，保证行/列存储数据强一致。','https://docs.pingcap.com/zh/tidb/stable/overview（实时 HTAP）'],
+  ['分布式事务','TiDB 支持分布式事务，提供乐观事务与悲观事务两种模式（默认悲观）。','https://docs.pingcap.com/zh/tidb/stable/transaction-overview'],
+  ['Raft 多副本高可用','金融级高可用：多副本存储，副本通过 Multi-Raft 协议同步事务日志，多数派写入成功才提交，强一致且少数副本故障不影响可用性。','https://docs.pingcap.com/zh/tidb/stable/overview（金融级高可用）'],
+  ['MySQL 协议兼容','兼容 MySQL 协议、常用功能与生态，应用无需或少量修改代码即可迁移。','https://docs.pingcap.com/zh/tidb/stable/overview ／ /mysql-compatibility'],
+  ['交付 / 部署形态','TiDB Operator 是 Kubernetes 上的 TiDB 集群自动运维系统，覆盖部署、升级、扩缩容、备份恢复、配置变更的全生命周期管理；托管服务为 TiDB Cloud。','https://docs.pingcap.com/zh/tidb/stable/tidb-operator-overview']
+];
+
+/* ============================================================================
+   5. 渲染
+   ========================================================================== */
+const app=document.getElementById('app');
+window.__errs=[]; window.addEventListener('error',e=>window.__errs.push(String(e.message||e)));
+const reduceMotion=()=>window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const isNarrow=()=>window.matchMedia('(max-width: 780px)').matches;
+const params=new URLSearchParams(location.search);
+const ERAS=['1968','1979','1986','2009','TiDB'];
+
+function topbar(){return `<div class="topbar">
+  <span class="t">数据库的前世今生：从一张表格到 TiDB</span>
+  <span class="spacer"></span><span class="badge" id="eraBadge">SCENE 0</span></div>`;}
+function listHTML(c){return (c.lead?`<p class="lead">${c.lead}</p>`:'')+(c.items&&c.items.length?`<ul>${c.items.map(x=>`<li>${x}</li>`).join('')}</ul>`:'');}
+function eraBar(){return `<div class="erabar"></div><div class="eralabels">${ERAS.map(e=>`<span>${e}</span>`).join('')}</div><div class="eramark" id="eraMark"></div>`;}
+
+let onScroll=null, curT=0, idleRaf=null;
+function renderScrolly(){
+  const rail=COPY.map((c,i)=>`<button class="rail-dot${i===0?' on':''}" data-i="${i}" title="${COPY[i].kicker}" aria-label="跳到第 ${i} 幕"></button>`).join('');
+  const chaps=COPY.map((c,i)=>`<section class="chapter" data-i="${i}" id="ch-${i}">
+    <div class="kicker">${c.kicker}</div><h2>${c.h2}</h2>${listHTML(c)}
+    <div class="src"><span class="tag">来源</span>${c.src}</div></section>`).join('');
+  app.innerHTML=`${topbar()}<div class="rail">${rail}</div>
+    <main id="scrolly">
+      <div class="stageCol"><div class="stage" id="stageBox">
+        <div class="stars" aria-hidden="true"></div>
+        <div class="pg" id="pg"></div>
+        <div class="motes" aria-hidden="true">${(function(){const pos=[[8,7.5,0],[18,9.2,1.3],[27,8.1,2.6],[36,10.4,0.7],[45,7.8,3.1],[54,9.9,1.9],[63,8.6,0.4],[71,10.1,2.3],[79,7.6,3.4],[87,9.4,1.1],[93,8.8,2.8],[61,11.2,4.0]];return pos.map(([x,d,dl],k)=>`<i style="left:${x}%;width:${k%3===0?4:3}px;height:${k%3===0?4:3}px;animation-duration:${d}s;animation-delay:${-dl}s"></i>`).join('');})()}</div>
+        <div class="era-chip"><span id="eraText">${COPY[0].kicker.split(' · ')[1]||''}</span></div>
+        <div class="typebar"><span id="typeText"></span><span class="caret"></span></div>
+        <div class="floor"></div>
+        <svg id="stageSvg" viewBox="0 0 480 300" preserveAspectRatio="xMidYMid meet" role="img" aria-label="等距数据立方体随滚动重排"></svg>
+        ${eraBar()}
+      </div></div>
+      <div class="stream">${chaps}</div>
+    </main>`;
+
+  const svgEl=document.getElementById('stageSvg');
+  const mark=document.getElementById('eraMark');
+  const eraText=document.getElementById('eraText');
+  const badge=document.getElementById('eraBadge');
+  const dots=[...document.querySelectorAll('.rail-dot')];
+  const chs=[...document.querySelectorAll('.chapter')];
+  const centers=()=>chs.map(c=>{const r=c.getBoundingClientRect();return window.scrollY+r.top+r.height/2;});
+  let ctr=centers(), lastI=-1;
+  function computeP(){
+    const mid=window.scrollY+window.innerHeight*0.5;
+    if(mid<=ctr[0]) return 0;
+    if(mid>=ctr[SCN-1]) return SCN-1;
+    for(let i=0;i<SCN-1;i++){
+      if(mid>=ctr[i]&&mid<=ctr[i+1]){
+        const t=(mid-ctr[i])/(ctr[i+1]-ctr[i]);
+        /* 分段停留：每章 scroll 区间两端共 52% 保持整数 p（图形静止），
+           中间 T=0.52 的过渡带做 i→i+1 平滑插值（停留 48% ≤50%，过渡带 1.53× 现版）。 */
+        const T=0.52, a=(1-T)/2;
+        if(t<=a) return i;
+        if(t>=1-a) return i+1;
+        const u=(t-a)/T;
+        return i+(u*u*(3-2*u));
+      }
+    }
+    return SCN-1;
+  }
+  const typeText=document.getElementById('typeText');
+  let typeTimer=null;
+  function typeScene(i){
+    if(!typeText) return;
+    clearInterval(typeTimer);
+    const full=COPY[i].kicker;
+    if(reduceMotion()){ typeText.textContent=full; return; }
+    typeText.textContent='';
+    let n=0;
+    typeTimer=setInterval(()=>{ n++; typeText.textContent=full.slice(0,n);
+      if(n>=full.length) clearInterval(typeTimer); },26);
+  }
+  function draw(){
+    const p=computeP();
+    svgEl.innerHTML=renderStageAt(p,curT);
+    const pos=(p/(SCN-1))*100;
+    mark.style.left=`calc(14px + (100% - 28px) * ${pos/100})`;
+    const i=Math.round(p);
+    if(i!==lastI){ lastI=i; dots.forEach((d,k)=>d.classList.toggle('on',k===i));
+      eraText.textContent=COPY[i].kicker.split(' · ').slice(1).join(' · '); badge.textContent='SCENE '+i; typeScene(i); }
+  }
+  let raf=false;
+  function onScrollInner(){ if(!raf){raf=true;requestAnimationFrame(()=>{raf=false;draw();});} }
+  onScroll=()=>{
+    const pr=document.getElementById('progress');
+    if(pr){const h=document.documentElement.scrollHeight-window.innerHeight;pr.style.width=(h>0?Math.min(1,Math.max(0,window.scrollY/h))*100:0)+'%';}
+    onScrollInner();
+  };
+  window.addEventListener('scroll',onScroll,{passive:true});
+  dots.forEach(d=>d.addEventListener('click',()=>document.getElementById('ch-'+d.dataset.i).scrollIntoView({block:'center'})));
+  window.addEventListener('resize',()=>{ctr=centers();draw();});
+
+  /* ---- 交互特效：指针光晕（#2 材质层）＋ 打字机「内审」状态行（#7） ---- */
+  const stageBox=document.getElementById('stageBox'), pg=document.getElementById('pg');
+  if(stageBox&&pg) stageBox.addEventListener('mousemove',e=>{
+    const r=stageBox.getBoundingClientRect();
+    pg.style.setProperty('--mx',((e.clientX-r.left)/r.width*100).toFixed(2)+'%');
+    pg.style.setProperty('--my',((e.clientY-r.top)/r.height*100).toFixed(2)+'%'); });
+
+  ctr=centers(); draw();
+  window.__computeP=computeP; window.__chapterCenters=()=>ctr.slice();
+  /* idle 时间层：仅 scrolly 可见时跑 rAF，只改 t（POS 锚点不随 t 变）；后台标签暂停 */
+  const idleT0=performance.now();
+  let idlePaused=false, idleVisible=true;
+  function tick(now){ if(idlePaused||!idleVisible){ idleRaf=requestAnimationFrame(tick); return; }
+    curT=(now-idleT0)/1000; draw(); idleRaf=requestAnimationFrame(tick); }
+  idleRaf=requestAnimationFrame(tick);
+  const onVis=()=>{ idlePaused=document.hidden; };
+  document.addEventListener('visibilitychange',onVis);
+  const stageEl=document.getElementById('stageBox');
+  let io=null;
+  if(stageEl){ io=new IntersectionObserver(es=>{ idleVisible=es[0].isIntersecting; },{threshold:0.05}); io.observe(stageEl); }
+  window.__idleCleanup=()=>{ document.removeEventListener('visibilitychange',onVis); if(io) io.disconnect(); };
+  /* QA 钩子：冻结 / 设定时间相位后重绘（供截图与验收，不影响正常交互） */
+  window.__setT=(v)=>{ idlePaused=true; curT=v; draw(); };
+  window.__resumeIdle=()=>{ idlePaused=false; };
+}
+
+function renderStack(isLong){
+  const t9=isLong?0:0.24*GROW_P; /* 长图取 t=0（约 70% 满）；单列 / reduced-motion 取满帧（u≈0.94） */
+  const secs=COPY.map((c,i)=>`<section class="stack-scene" data-i="${i}">
+    <div class="panel"><div class="stars" aria-hidden="true"></div><div class="floor"></div>${renderStageAt(i,t9)}</div>
+    <div class="kicker">${c.kicker}</div><h2>${c.h2}</h2>${listHTML(c)}
+    <div class="src"><span class="tag">来源</span>${c.src}</div></section>`).join('');
+  const rows=SOURCES.map(([n,d,u])=>`<tr><td><b>${n}</b></td><td>${d}</td><td><code>${u}</code></td></tr>`).join('');
+  const head=isLong?`<header id="longhead">
+      <div class="kicker">TiDB 1024 AIGC 黑客松 · 方向① 产品特性解读 / 技术概念可视化 · <b>A 版</b></div>
+      <h1>数据库的前世今生：从一张表格到 TiDB</h1>
+      <p>从文件、表格到分布式——一条关于「数据如何被组织」的简史。</p>
+    </header>`:'';
+  const foot=`<h3>A 版 · 来源总表</h3>
+    <table><thead><tr><th class="c1">能力 / 概念</th><th>陈述（对官方口径）</th><th class="c3">来源</th></tr></thead><tbody>${rows}</tbody></table>
+    <p style="color:#a3aec0;font-size:13.5px;margin-top:16px">史实（Scene 2–6）注明出处；能力（Scene 8）逐条对 docs.pingcap.com。产品主张与史实分栏，无绝对化用语。参考文只借结构、文字自写。图注：代码生成、未使用图像生成模型。</p>`;
+  app.innerHTML=`<main id="stack">${head}${secs}<section class="stack-scene">${foot}</section></main>`;
+}
+
+function render(){
+  if(onScroll){window.removeEventListener('scroll',onScroll,{passive:true});onScroll=null;}
+  if(idleRaf){cancelAnimationFrame(idleRaf);idleRaf=null;}
+  if(window.__idleCleanup){window.__idleCleanup();window.__idleCleanup=null;}
+  const wantLong=params.get('long')==='1';
+  const mode=wantLong?'long':((reduceMotion()||isNarrow())?'stack':'scrolly');
+  document.body.className='mode-'+mode;
+  if(mode==='scrolly') renderScrolly(); else renderStack(mode==='long');
+  document.title=(mode==='long'?'[长图] ':'')+'数据库的前世今生：从一张表格到 TiDB · A 版 · TiDB 1024';
+  if(params.get('measure')==='1') document.title='H='+document.documentElement.scrollHeight+' W='+document.documentElement.scrollWidth;
+}
+window.addEventListener('scroll',()=>{ if(onScroll) onScroll(); },{passive:true});
+let rt=null;
+window.addEventListener('resize',()=>{ clearTimeout(rt); rt=setTimeout(render,180); });
+
+/* ---- QA 自检（?selftest=1 → JSON 写入 title） ---- */
+function runSelfTest(){
+  const L=rgb=>{const a=rgb.map(v=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4)});return 0.2126*a[0]+0.7152*a[1]+0.0722*a[2];};
+  const P=c=>{const m=String(c).match(/rgba?\(([^)]+)\)/);if(!m)return[255,255,255,1];const p=m[1].split(',').map(s=>parseFloat(s));return[p[0],p[1],p[2],p[3]===undefined?1:p[3]];};
+  const CR=(a,b)=>{const x=L(a),y=L(b),hi=Math.max(x,y),lo=Math.min(x,y);return(hi+0.05)/(lo+0.05);};
+  const bgOf=el=>{let e=el;while(e&&e.nodeType===1){const p=P(getComputedStyle(e).backgroundColor);if(p[3]>0.5)return p;e=e.parentElement;}return[13,16,21,1];};
+  const res={mode:(document.body.className.match(/mode-\w+/)||[''])[0],w:innerWidth,
+    overflowPx:document.documentElement.scrollWidth-innerWidth,overflowEls:[],contrastFails:[],offenders:[],
+    counts:{chapters:document.querySelectorAll('.chapter').length,stackScenes:document.querySelectorAll('.stack-scene').length,
+      svg:document.querySelectorAll('svg').length,cubes:document.querySelectorAll('svg polygon').length},
+    jsErrors:window.__errs};
+  const cw=document.documentElement.clientWidth;
+  document.querySelectorAll('body *').forEach(el=>{
+    const r=el.getBoundingClientRect();
+    if(r.width>0&&(r.right>cw+1||r.left<-1)) res.overflowEls.push(el.tagName+'.'+(typeof el.className==='string'?el.className:''));
+    const cs=getComputedStyle(el);
+    if(cs.display==='none'||cs.visibility==='hidden')return;
+    const t=[...el.childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent.trim()).join(' ').trim();
+    if(!t)return;
+    const isSvg=el.namespaceURI==='http://www.w3.org/2000/svg';
+    const fg=P(isSvg?(cs.fill||'rgb(0,0,0)'):cs.color), bg=bgOf(el);
+    const f2=fg[3]<1?fg.slice(0,3).map((v,i)=>v*fg[3]+bg[i]*(1-fg[3])):fg.slice(0,3);
+    const size=parseFloat(cs.fontSize),weight=parseInt(cs.fontWeight)||400;
+    const need=(size>=24||(size>=18.66&&weight>=700))?3:4.5, cr=CR(f2,bg);
+    if(cr<need) res.contrastFails.push({t:t.slice(0,20),cr:+cr.toFixed(2),need});
+  });
+  /* HTML 可见文字最小字号（非 SVG） */
+  res.minFont=null; let mf=999;
+  document.querySelectorAll('body *').forEach(el=>{
+    const ns=el.namespaceURI==='http://www.w3.org/2000/svg'; if(ns)return;
+    const cs=getComputedStyle(el);
+    if(cs.display==='none'||cs.visibility==='hidden')return;
+    const t=[...el.childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent.trim()).join('').trim();
+    if(!t)return;
+    const fs=parseFloat(cs.fontSize);
+    if(fs<mf){mf=fs;res.minFont={tag:el.tagName+'.'+(typeof el.className==='string'?el.className:''),px:fs,t:t.slice(0,16)};}
+  });
+  /* SVG 主焦点 bbox 审计：逐 svg 最大叶子元素占比 + 越界元素 */
+  res.svgAudit=[];
+  [...document.querySelectorAll('svg')].forEach((svg,idx)=>{
+    const vb=svg.viewBox.baseVal, area=vb.width*vb.height;
+    const els=[...svg.querySelectorAll('polygon,ellipse,rect,path,circle')];
+    let big=null, bigEl=null;
+    els.forEach(el=>{const b=el.getBBox(),a=b.width*b.height;
+      if(!big||a>big.a){big={a:+a.toFixed(0),tag:el.tagName,w:+b.width.toFixed(1),h:+b.height.toFixed(1),x:+b.x.toFixed(1),y:+b.y.toFixed(1),fill:el.getAttribute('fill')};bigEl=el;}});
+    const oob=els.filter(el=>{const b=el.getBBox();return b.x<-0.5||b.y<-0.5||b.x+b.width>vb.width+0.5||b.y+b.height>vb.height+0.5;}).map(el=>el.tagName);
+    const op=bigEl?parseFloat(getComputedStyle(bigEl).opacity):1;
+    res.svgAudit.push({i:idx,ratio:big?+(big.a/area).toFixed(3):0,opaqueOp:op,big,oob:oob.slice(0,6),oobN:oob.length});
+  });
+  /* 全 p 采样验收（新增）：p=0…9 步 0.1 ——
+     (a) SVG 文本 vs 形状 0 相交（含文字的不透明底板/图例框除外）；
+     (b) 方块簇与上下 HTML 覆盖带 0 相交。 */
+  try{
+    const holder=document.createElement('div');
+    holder.style.cssText='position:absolute;left:-99999px;top:0;width:480px;height:300px;pointer-events:none';
+    document.body.appendChild(holder);
+    const stageEl=document.querySelector('.stage');
+    let bandTop=null, bandBot=null;
+    if(stageEl){
+      const sr=stageEl.getBoundingClientRect(), k=sr.width/480;
+      const topEls=[...document.querySelectorAll('.era-chip,.typebar')].filter(e=>e.getClientRects().length);
+      const botEls=[...document.querySelectorAll('.erabar,.eralabels,.eramark')].filter(e=>e.getClientRects().length);
+      if(topEls.length) bandTop=Math.max(...topEls.map(e=>(e.getBoundingClientRect().bottom-sr.top)/k));
+      if(botEls.length) bandBot=Math.min(...botEls.map(e=>(e.getBoundingClientRect().top-sr.top)/k));
+    }
+    const inter=(a,b)=>Math.max(0,Math.min(a.x+a.width,b.x+b.width)-Math.max(a.x,b.x))*Math.max(0,Math.min(a.y+a.height,b.y+b.height)-Math.max(a.y,b.y));
+    const covers=(a,b)=>a.x-3<=b.x+0.5&&a.y-3<=b.y+0.5&&a.x+a.width+3>=b.x+b.width-0.5&&a.y+a.height+3>=b.y+b.height-0.5;
+    const scan=[];
+    for(let s=0;s<=90;s++){
+      const p=+(s/10).toFixed(1);
+      holder.innerHTML=renderStageAt(p);
+      const svg=holder.querySelector('svg');
+      const sb=[...svg.querySelectorAll('polygon,ellipse,rect,path,circle')].filter(el=>!el.classList.contains('plate')).map(el=>({el,b:el.getBBox()}));
+      let hits=0, sample=[];
+      [...svg.querySelectorAll('text')].forEach(t=>{
+        const tb=t.getBBox();
+        sb.forEach(o=>{ if(o.el===t)return; if(covers(o.b,tb))return;
+          if(inter(o.b,tb)>2){hits++; if(sample.length<4)sample.push(t.textContent.slice(0,10)+'×'+o.el.tagName);} });
+      });
+      const cubeEls=[...svg.querySelectorAll('g.cube')];
+      let cub=null;
+      if(cubeEls.length){ let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+        cubeEls.forEach(g=>{const b=g.getBBox();x0=Math.min(x0,b.x);y0=Math.min(y0,b.y);x1=Math.max(x1,b.x+b.width);y1=Math.max(y1,b.y+b.height);});
+        cub={y:+y0.toFixed(1),y1:+y1.toFixed(1)}; }
+      const rec={p,textHits:hits};
+      if(cub) rec.cube=cub;
+      if(cub&&bandTop!==null&&cub.y<bandTop-0.5) rec.bandHit='top';
+      if(cub&&bandBot!==null&&cub.y1>bandBot+0.5) rec.bandHit=(rec.bandHit?rec.bandHit+'+':'')+'bottom';
+      if(sample.length) rec.sample=sample;
+      if(hits||rec.bandHit) scan.push(rec);
+    }
+    holder.remove();
+    res.pScan={samples:91,textCubeHits:scan.filter(r=>r.textHits).length,
+      bandHits:scan.filter(r=>r.bandHit).length,details:scan.slice(0,8)};
+  }catch(e){ res.pScan={error:String((e&&e.message)||e)}; }
+  /* 新增验收 · Scene 8：文本节点与其所属 plate 框内边距（取各文本最小边距） */
+  try{
+    const h8=document.createElement('div');
+    h8.style.cssText='position:absolute;left:-99999px;top:0;width:480px;height:300px;pointer-events:none';
+    document.body.appendChild(h8); h8.innerHTML=renderStageAt(8,0);
+    const svg8=h8.querySelector('svg'), plates=[...svg8.querySelectorAll('rect.plate')].map(r=>r.getBBox());
+    let minPad=999, worst=null;
+    [...svg8.querySelectorAll('text')].forEach(t=>{ const tb=t.getBBox();
+      const cx=tb.x+tb.width/2, cy=tb.y+tb.height/2; let best=null;
+      plates.forEach(pb=>{ if(cx>=pb.x&&cx<=pb.x+pb.width&&cy>=pb.y&&cy<=pb.y+pb.height){
+        const pad=Math.min(tb.x-pb.x, pb.x+pb.width-(tb.x+tb.width), tb.y-pb.y, pb.y+pb.height-(tb.y+tb.height));
+        if(best===null||pad>best) best=pad; } });
+      if(best!==null&&best<minPad){minPad=best; worst={t:t.textContent.slice(0,12),pad:+best.toFixed(1)};} });
+    h8.remove(); res.s8pad={minPad:+minPad.toFixed(1),worst};
+  }catch(e){ res.s8pad={error:String((e&&e.message)||e)}; }
+  /* 新增验收 · Scene 9：一周期内方块恒在安全区、柱高随 u 单调递增后重置 */
+  try{
+    const h9=document.createElement('div');
+    h9.style.cssText='position:absolute;left:-99999px;top:0;width:480px;height:300px;pointer-events:none';
+    document.body.appendChild(h9);
+    let bt=null,bb=null; const st=document.querySelector('.stage');
+    if(st){ const sr=st.getBoundingClientRect(), k=sr.width/480;
+      const tE=[...document.querySelectorAll('.era-chip,.typebar')].filter(e=>e.getClientRects().length);
+      const bE=[...document.querySelectorAll('.erabar,.eralabels,.eramark')].filter(e=>e.getClientRects().length);
+      if(tE.length) bt=Math.max(...tE.map(e=>(e.getBoundingClientRect().bottom-sr.top)/k));
+      if(bE.length) bb=Math.min(...bE.map(e=>(e.getBoundingClientRect().top-sr.top)/k)); }
+    const recs=[]; let safeFail=0, monoFail=0, maxTop=1e9, minBot=-1e9, prevU=-1, prevA=-1;
+    for(let s=0;s<20;s++){ const tt=s*(GROW_P/20);
+      h9.innerHTML=renderStageAt(9,tt);
+      const svg9=h9.querySelector('svg'), cub=[...svg9.querySelectorAll('g.cube')];
+      let y0=1e9,y1=-1e9,active=0;
+      cub.forEach(g=>{ const op=parseFloat(getComputedStyle(g).opacity); if(op>0.05) active++;
+        const b=g.getBBox(); y0=Math.min(y0,b.y); y1=Math.max(y1,b.y+b.height); });
+      const uu=growth9(tt).u;
+      if(cub.length){ maxTop=Math.min(maxTop,y0); minBot=Math.max(minBot,y1);
+        if((bt!==null&&y0<bt-0.5)||(bb!==null&&y1>bb+0.5)) safeFail++; }
+      if(prevU>=0 && uu>prevU && active<prevA) monoFail++;
+      prevU=uu; prevA=active;
+      recs.push({t:+tt.toFixed(2),u:+uu.toFixed(2),active,y0:+y0.toFixed(1),y1:+y1.toFixed(1)});
+    }
+    h9.remove();
+    res.scene9={samples:recs.length,safeFail,monoFail,maxTop:+maxTop.toFixed(1),minBot:+minBot.toFixed(1),
+      bandTop:bt===null?null:+bt.toFixed(1),bandBot:bb===null?null:+bb.toFixed(1),recs:recs.slice(0,10)};
+  }catch(e){ res.scene9={error:String((e&&e.message)||e)}; }
+  document.title='SELFTEST '+JSON.stringify(res);
+}
+
+render();
+if(params.get('selftest')==='1') runSelfTest();
+</script>
+<!--
+  内部 QA 注（仅供审阅，不进入用户可见区）
+  · S2 src：IBM IMS 1968 权威源待终审二次核。
+  · S3 src：网状模型 / CODASYL 路线权威源待终审二次核。
+  · S4 src：Codd 1970｜Oracle V2 1979｜ANSI SQL-86 1986｜DB2 1983｜SQL Server 1989｜MySQL 1995｜PostgreSQL 1996 —— 均待终审二次核权威源。
+  · S5 src：NoSQL 一词流行于 2009 待终审二次核；分类为通行共识。
+  · S8 src：架构特征与陈述逐条对 docs.pingcap.com 概览；不宣称逐条对应痛点；禁绝对化词。
+  · S9 src：收束为前瞻性叙事；能力名以 docs.pingcap.com 为准，不含绝对化表述。
+-->
+</body>
+</html>
