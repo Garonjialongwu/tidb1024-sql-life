@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>数据库的前世今生：从一张表格到 TiDB · TiDB 1024</title>
+<title>数据库的前世今生：从一张表格到 TiDB -TiDB 1024</title>
 <meta name="description" content="数据库的前世今生：从一张表格到 TiDB。同一批等距数据立方体，随滚动在十幕间真实重排，讲清数据如何从文件走到分布式数据库。代码生成 SVG，未使用图像生成模型。">
 <!--
   A 版 · 数据建筑学（等距立方体 ＋ 滚动形变 ＋ 时代色带）
@@ -869,7 +869,7 @@ function render(){
   const mode=wantLong?'long':((reduceMotion()||isNarrow())?'stack':'scrolly');
   document.body.className='mode-'+mode;
   if(mode==='scrolly') renderScrolly(); else renderStack(mode==='long');
-  document.title=(mode==='long'?'[长图] ':'')+'数据库的前世今生：从一张表格到 TiDB · TiDB 1024';
+  document.title=(mode==='long'?'[长图] ':'')+'数据库的前世今生：从一张表格到 TiDB -TiDB 1024';
   if(params.get('measure')==='1') document.title='H='+document.documentElement.scrollHeight+' W='+document.documentElement.scrollWidth;
 }
 window.addEventListener('scroll',()=>{ if(onScroll) onScroll(); },{passive:true});
